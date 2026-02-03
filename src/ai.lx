@@ -1,0 +1,555 @@
+@module "ai"
+
+@use "board" as board
+@use "piece" as piece
+@use "std_string" as string
+@use "openings" as openings
+
+// Transposition table entry
+const TTEntry -> struct {
+  hash: int,           // Position hash
+  depth: int,          // Depth of search
+  score: int,          // Evaluation score
+  flag: int,           // 0=exact, 1=lower bound (alpha), 2=upper bound (beta)
+  best_move: Move      // Best move found
+};
+
+// Transposition table - simple hash table
+const TT_SIZE: int = 65536;  // 64K entries (power of 2 for fast modulo)
+const TT_EXACT: int = 0;
+const TT_ALPHA: int = 1;
+const TT_BETA: int = 2;
+
+pub const AI -> struct {
+  depth: int,
+  best_move: Move,
+  use_opening_book: int,
+  tt: *TTEntry,         
+  nodes_searched: int
+};
+
+// Piece values for evaluation
+const PAWN_VALUE:   int = 100;
+const KNIGHT_VALUE: int = 320;
+const BISHOP_VALUE: int = 330;
+const ROOK_VALUE:   int = 500;
+const QUEEN_VALUE:  int = 900;
+const KING_VALUE:   int = 20000;
+
+const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int;
+
+// Simple hash function for board position
+const hash_position -> fn (bd: *Board) int {
+  let hash: int = 0;
+  loop [i: int = 0](i < 64) : (++i) {
+    let piece_byte: byte = bd.squares[i];
+    if (piece_byte != '.') {
+      // Simple hash: piece value * position
+      hash = hash + (cast<int>(piece_byte) * (i + 1));
+    }
+  }
+  return hash;
+}
+
+// Initialize transposition table
+#returns_ownership
+pub const init_ai -> fn (ai: *AI) void {
+  ai.tt = cast<*TTEntry>(alloc(TT_SIZE * sizeof<TTEntry>));
+  
+  // Initialize all entries
+  loop [i: int = 0](i < TT_SIZE) : (++i) {
+    ai.tt[i].hash = -1;
+    ai.tt[i].depth = -1;
+    ai.tt[i].score = 0;
+    ai.tt[i].flag = TT_EXACT;
+  }
+  
+  ai.nodes_searched = 0;
+}
+
+// Free transposition table
+#takes_ownership
+pub const free_ai -> fn (ai: *AI) void {
+  if (ai.tt != cast<*TTEntry>(0)) {
+    free(ai.tt);
+  }
+}
+
+// Store position in transposition table
+const tt_store -> fn (ai: *AI, hash: int, depth: int, score: int, flag: int, mv: *Move) void {
+  let index: int = hash % TT_SIZE;
+  if (index < 0) { index = -index; }
+  
+  // Replace if: no entry, or deeper search, or same depth but better score
+  if (ai.tt[index].hash == -1 || ai.tt[index].depth <= depth) {
+    ai.tt[index].hash = hash;
+    ai.tt[index].depth = depth;
+    ai.tt[index].score = score;
+    ai.tt[index].flag = flag;
+    ai.tt[index].best_move = *mv;
+  }
+}
+
+// Probe transposition table
+const tt_probe -> fn (ai: *AI, hash: int, depth: int, alpha: int, beta: int, result_score: *int) int {
+  let index: int = hash % TT_SIZE;
+  if (index < 0) { index = -index; }
+  
+  if (ai.tt[index].hash == hash && ai.tt[index].depth >= depth) {
+    let score: int = ai.tt[index].score;
+    
+    if (ai.tt[index].flag == TT_EXACT) {
+      *result_score = score;
+      return 1; // Exact score
+    } elif (ai.tt[index].flag == TT_ALPHA && score <= alpha) {
+      *result_score = alpha;
+      return 1; // Upper bound
+    } elif (ai.tt[index].flag == TT_BETA && score >= beta) {
+      *result_score = beta;
+      return 1; // Lower bound
+    }
+  }
+  
+  return 0; // No usable entry
+}
+
+// Get piece value for evaluation
+const get_piece_value -> fn (piece_byte: byte) int {
+  let piece_upper: byte = piece_byte;
+  if (piece_byte >= 'a' && piece_byte <= 'z') {
+    piece_upper = cast<byte>(cast<int>(piece_byte) - 32);
+  }
+  
+  switch (piece_upper) {
+    'P' -> { return PAWN_VALUE; }
+    'N' -> { return KNIGHT_VALUE; }
+    'B' -> { return BISHOP_VALUE; }
+    'R' -> { return ROOK_VALUE; }
+    'Q' -> { return QUEEN_VALUE; }
+    'K' -> { return KING_VALUE; }
+  }
+  
+  return 0;
+}
+
+const get_position_bonus -> fn (piece_byte: byte, square: int) int {
+  let row: int = square / 8;
+  let col: int = square % 8;
+
+  let is_center: int = 0;
+  if ((row == 3 || row == 4) && (col == 3 || col ==4)) is_center = 1;
+
+  let piece_upper: byte = piece_byte;
+  if (piece_byte >= 'a' && piece_byte <= 'z')
+    piece_upper = cast<byte>(cast<int>(piece_byte) - 32);
+
+  // The knights and bishops get a bonus in the center
+  if ((piece_upper == 'N' || piece_upper == 'B') && is_center == 1) return 30;
+
+  if (piece_upper == 'P') {
+    if (piece::is_white_piece(piece_byte) == 1) {
+      return (7 - row) * 5; // White pawns: advance = better
+    } else {
+      return row * 5;       // Black pawns: advance = better
+    }
+  }
+
+  return 0;
+}
+
+// Evaluate the current board position
+pub const evaluate_position -> fn (bd: *Board) int {
+  let score: int = 0;
+  
+  loop [i: int = 0](i < 64) : (++i) {
+    let piece_byte: byte = bd.squares[i];
+    if (piece_byte == '.') { continue; }
+    
+    let value: int = get_piece_value(piece_byte);
+    let pos_bonus: int = get_position_bonus(piece_byte, i);
+    
+    // Add value for white pieces, subtract for black pieces
+    if (piece::is_white_piece(piece_byte) == 1) {
+      score = score + value + pos_bonus;
+    } else {
+      score = score - value - pos_bonus;
+    }
+  }
+  
+  return score;
+}
+
+// Score a move for move ordering (MVV-LVA: Most Valuable Victim - Least Valuable Attacker)
+const score_move -> fn (bd: *Board, mv: *Move) int {
+  let from_index: int = mv.from_row * 8 + mv.from_col;
+  let to_index: int = mv.to_row * 8 + mv.to_col;
+  
+  let attacker: byte = bd.squares[from_index];
+  let victim: byte = bd.squares[to_index];
+  
+  let score: int = 0;
+  
+  // Captures are good - value of victim minus value of attacker
+  if (victim != '.') {
+    let victim_value: int = get_piece_value(victim);
+    let attacker_value: int = get_piece_value(attacker);
+    score = victim_value - attacker_value / 10;
+  }
+  
+  // TODO: Add other heuristics:
+  // - Checks
+  // - Promotions
+  // - Killer moves
+  // - History heuristic
+  
+  return score;
+}
+
+// Sort moves by score (bubble sort - simple but effective for small lists)
+const sort_moves -> fn (bd: *Board, moves: *Move, move_count: int) void {
+  if (move_count <= 1) { return; }  // Add this check!
+  
+  loop [i: int = 0](i < move_count - 1) : (++i) {
+    loop [j: int = 0](j < move_count - i - 1) : (++j) {
+      let score_j: int = score_move(bd, &moves[j]);
+      let score_j1: int = score_move(bd, &moves[j + 1]);
+      
+      if (score_j < score_j1) {
+        // Swap
+        let temp: Move = moves[j];
+        moves[j] = moves[j + 1];
+        moves[j + 1] = temp;
+      }
+    }
+  }
+}
+
+// Generate all legal moves for a given color
+pub const generate_moves -> fn (bd: *Board, is_white: int, moves: *Move, max_moves: int) int {
+  let move_count: int = 0;
+  
+  loop [from: int = 0](from < 64 && move_count < max_moves) : (++from) {
+    let piece_byte: byte = bd.squares[from];
+    if (piece_byte == '.') { continue; }
+    
+    // Skip pieces that don't match the current color
+    if (is_white == 1 && piece::is_white_piece(piece_byte) == 0) { continue; }
+    if (is_white == 0 && piece::is_black_piece(piece_byte) == 0) { continue; }
+    
+    let from_row: int = from / 8;
+    let from_col: int = from % 8;
+    
+    // Try all possible destination squares
+    loop [to: int = 0](to < 64 && move_count < max_moves) : (++to) {
+      if (from == to) { continue; }
+      
+      let to_row: int = to / 8;
+      let to_col: int = to % 8;
+      
+      let mv: Move = {
+        from_row: from_row,
+        from_col: from_col,
+        to_row: to_row,
+        to_col: to_col
+      };
+      
+      // Check if this move is legal
+      if (is_move_valid(bd, &mv, is_white) == 1) {
+        moves[move_count] = mv;
+        move_count = move_count + 1;
+      }
+    }
+  }
+  
+  return move_count;
+}
+
+// Check if a move is valid without modifying the board
+const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
+  let from_index: int = mv.from_row * 8 + mv.from_col;
+  let to_index: int = mv.to_row * 8 + mv.to_col;
+  
+  if (from_index < 0 || from_index >= 64 || to_index < 0 || to_index >= 64) {
+    return 0;
+  }
+  
+  let piece_byte: byte = bd.squares[from_index];
+  if (piece_byte == '.') { return 0; }
+  
+  let target: byte = bd.squares[to_index];
+  
+  // Check piece color matches turn
+  let is_white_piece: int = piece::is_white_piece(piece_byte);
+  if (is_white == 1 && is_white_piece == 0) { return 0; }
+  if (is_white == 0 && is_white_piece == 1) { return 0; }
+  
+  // Check en passant
+  let is_en_passant: int = board::is_en_passant_move(bd, mv, piece_byte, is_white_piece);
+  
+  if (is_en_passant == 0) {
+    if (piece::can_capture(piece_byte, target) == 0) {
+      return 0;
+    }
+  }
+  
+  // Check castling
+  if (board::is_castling_move(mv, piece_byte) == 1) {
+    return board::handle_castling_check(bd, mv, piece_byte, is_white_piece);
+  }
+  
+  // Validate piece movement rules
+  let rule: *PieceRules = piece::get_rules(piece_byte);
+  if (rule == cast<*PieceRules>(0)) { return 0; }
+  
+  let dc: int = mv.to_col - mv.from_col;
+  let dr: int = mv.to_row - mv.from_row;
+  
+  // Special handling for pawns
+  if (piece_byte == 'P' || piece_byte == 'p') {
+    if (is_en_passant == 0) {
+      if (piece::validate_pawn_move(rule, dc, dr, mv.from_row, target, is_white_piece) == 0) {
+        return 0;
+      }
+      if (board::validate_pawn_path(bd, mv, dr, dc) == 0) {
+        return 0;
+      }
+    }
+  } else {
+    if (board::is_move_legal(rule, bd, mv) == 0) {
+      return 0;
+    }
+  }
+  
+  // Simulate move and check if king is in check
+  let backup_from: byte = bd.squares[from_index];
+  let backup_to: byte = bd.squares[to_index];
+  let backup_en_passant: byte = '.';
+  let en_passant_capture_index: int = -1;
+  
+  if (is_en_passant == 1) {
+    en_passant_capture_index = mv.from_row * 8 + mv.to_col;
+    backup_en_passant = bd.squares[en_passant_capture_index];
+  }
+  
+  bd.squares[to_index] = piece_byte;
+  bd.squares[from_index] = '.';
+  
+  if (is_en_passant == 1) {
+    bd.squares[en_passant_capture_index] = '.';
+  }
+  
+  let in_check: int = board::is_king_in_check(bd, -cast<int>(is_white_piece == 1));
+  
+  // Undo move
+  bd.squares[from_index] = backup_from;
+  bd.squares[to_index] = backup_to;
+  if (is_en_passant == 1) {
+    bd.squares[en_passant_capture_index] = backup_en_passant;
+  }
+  
+  if (in_check == 1) { return 0; }
+  
+  return 1;
+}
+
+// Make a move on the board
+const make_move -> fn (bd: *Board, mv: *Move) void {
+  let from_index: int = mv.from_row * 8 + mv.from_col;
+  let to_index: int = mv.to_row * 8 + mv.to_col;
+  
+  bd.squares[to_index] = bd.squares[from_index];
+  bd.squares[from_index] = '.';
+}
+
+// Undo a move on the board
+const unmake_move -> fn (bd: *Board, mv: *Move, captured: byte) void {
+  let from_index: int = mv.from_row * 8 + mv.from_col;
+  let to_index: int = mv.to_row * 8 + mv.to_col;
+  
+  bd.squares[from_index] = bd.squares[to_index];
+  bd.squares[to_index] = captured;
+}
+
+// Minimax algorithm with alpha-beta pruning and transposition table
+const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_maximizing: int) int {
+  ai.nodes_searched = ai.nodes_searched + 1;
+  
+  // Check transposition table
+  let hash: int = hash_position(bd);
+  let tt_score: int = 0;
+  if (tt_probe(ai, hash, depth, alpha, beta, &tt_score) == 1) {
+    return tt_score;
+  }
+  
+  // Base case: depth 0 or game over
+  if (depth == 0) {
+    return evaluate_position(bd);
+  }
+  
+  let moves: [Move; 218];
+  let move_count: int = generate_moves(bd, is_maximizing, &moves[0], 218);
+  
+  // If no legal moves, it's checkmate or stalemate
+  if (move_count == 0) {
+    if (board::is_king_in_check(bd, -cast<int>(is_maximizing == 1)) == 1) {
+      if (is_maximizing == 1) {
+        return -KING_VALUE - depth; // Prefer faster checkmates
+      } else {
+        return KING_VALUE + depth;
+      }
+    }
+    return 0; // Stalemate
+  }
+  
+  // MOVE ORDERING: Sort moves by heuristic score
+  sort_moves(bd, &moves[0], move_count);
+  
+  let best_move: Move;
+  
+  if (is_maximizing == 1) {
+    let max_eval: int = -KING_VALUE - 1000;
+    let flag: int = TT_ALPHA;
+    
+    loop [i: int = 0](i < move_count) : (++i) {
+      let from_index: int = moves[i].from_row * 8 + moves[i].from_col;
+      let to_index: int = moves[i].to_row * 8 + moves[i].to_col;
+      let captured: byte = bd.squares[to_index];
+      
+      make_move(bd, &moves[i]);
+      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 0);
+      unmake_move(bd, &moves[i], captured);
+      
+      if (eval > max_eval) {
+        max_eval = eval;
+        best_move = moves[i];
+        if (eval >= beta) {
+          flag = TT_BETA;
+        } elif (eval > alpha) {
+          flag = TT_EXACT;
+        }
+      }
+      
+      if (eval > alpha) {
+        alpha = eval;
+      }
+      
+      if (beta <= alpha) {
+        break; // Beta cutoff
+      }
+    }
+    
+    tt_store(ai, hash, depth, max_eval, flag, &best_move);
+    return max_eval;
+  } else {
+    let min_eval: int = KING_VALUE + 1000;
+    let flag: int = TT_BETA;
+    
+    loop [i: int = 0](i < move_count) : (++i) {
+      let from_index: int = moves[i].from_row * 8 + moves[i].from_col;
+      let to_index: int = moves[i].to_row * 8 + moves[i].to_col;
+      let captured: byte = bd.squares[to_index];
+      
+      make_move(bd, &moves[i]);
+      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 1);
+      unmake_move(bd, &moves[i], captured);
+      
+      if (eval < min_eval) {
+        min_eval = eval;
+        best_move = moves[i];
+        if (eval <= alpha) {
+          flag = TT_ALPHA;
+        } elif (eval < beta) {
+          flag = TT_EXACT;
+        }
+      }
+      
+      if (eval < beta) {
+        beta = eval;
+      }
+      
+      if (beta <= alpha) {
+        break; // Alpha cutoff
+      }
+    }
+    
+    tt_store(ai, hash, depth, min_eval, flag, &best_move);
+    return min_eval;
+  }
+}
+
+// Find the best move for the AI
+pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byte, move_count: int) *Move {
+  ai.nodes_searched = 0;
+  
+  // Check opening book first if enabled
+  if (ai.use_opening_book == 1) {
+    let book_move: Move;
+    if (openings::get_book_move(moves, move_count, &book_move) == 1) {
+      ai.best_move = book_move;
+      return &ai.best_move;
+    }
+  }
+  
+  // If not in book, use minimax with optimizations
+  let legal_moves: [Move; 218];
+  let legal_move_count: int = generate_moves(bd, is_white, &legal_moves[0], 218);
+  
+  if (legal_move_count == 0) {
+    return cast<*Move>(0);
+  }
+  
+  // Sort moves for better alpha-beta pruning
+  sort_moves(bd, &legal_moves[0], legal_move_count);
+  
+  let best_value: int;
+  if (is_white == 1) {
+    best_value = -KING_VALUE - 1000;
+  } else {
+    best_value = KING_VALUE + 1000;
+  }
+  
+  let best_move_index: int = 0;
+  
+  loop [i: int = 0](i < legal_move_count) : (++i) {
+    let from_index: int = legal_moves[i].from_row * 8 + legal_moves[i].from_col;
+    let to_index: int = legal_moves[i].to_row * 8 + legal_moves[i].to_col;
+    let captured: byte = bd.squares[to_index];
+    
+    make_move(bd, &legal_moves[i]);
+
+    let is_opp_maximizing: int = 0;
+    if (is_white == 0) { is_opp_maximizing = 1; } // Next move is opponent's
+
+    let eval: int = minimax(ai, bd, ai.depth - 1, -KING_VALUE - 1000, KING_VALUE + 1000, is_opp_maximizing); 
+    unmake_move(bd, &legal_moves[i], captured);
+    
+    if (is_white == 1) {
+      if (eval > best_value) {
+        best_value = eval;
+        best_move_index = i;
+      }
+    } else {
+      if (eval < best_value) {
+        best_value = eval;
+        best_move_index = i;
+      }
+    }
+  }
+  
+  ai.best_move = legal_moves[best_move_index];
+  return &ai.best_move;
+}
+
+// Convert a Move to algebraic notation
+pub const move_to_string -> fn (mv: *Move, buffer: *byte) void {
+  buffer[0] = cast<byte>(cast<int>('a') + mv.from_col);
+  buffer[1] = cast<byte>(cast<int>('1') + (7 - mv.from_row));
+  buffer[2] = cast<byte>(cast<int>('a') + mv.to_col);
+  buffer[3] = cast<byte>(cast<int>('1') + (7 - mv.to_row));
+  buffer[4] = cast<byte>(0);
+}
+
+// Get statistics
+pub const get_nodes_searched -> fn (ai: *AI) int {
+  return ai.nodes_searched;
+}

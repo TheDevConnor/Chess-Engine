@@ -1,0 +1,137 @@
+@module "main"
+
+@use "std_terminal" as term
+@use "std_string" as string
+@use "std_termfx" as termfx
+@use "std_memory" as mem
+@use "board" as board
+@use "ai" as ai
+@use "openings" as openings
+
+pub const main -> fn () int { 
+  let bd: Board;
+  let mv: Move;
+  board::init_board(&bd);
+
+  // Initialize AI
+  let engine: AI;
+  engine.depth = 6;  
+  engine.use_opening_book = 1;
+  
+  ai::init_ai(&engine);
+  let user_input: *byte = cast<*byte>(alloc(5 * sizeof<byte>));
+  let moves: **byte = cast<**byte>(alloc(256 * sizeof<*byte>));
+  loop [j: int = 0](j < 256) : (++j) { 
+    moves[j] = cast<*byte>(alloc(6 * sizeof<byte>)); 
+  } 
+
+  defer { 
+    free(bd.squares); free(user_input); ai::free_ai(&engine);
+    loop [j: int = 0](j < 256) : (++j) { free(moves[j]); } 
+    free(moves); 
+  }
+  
+  let white_to_move: int = 1;  // 1 = white's turn, 0 = black's turn
+  let move_count: int = 0;
+  let is_valid: int = 0;
+  
+  // Ask if player wants to play against AI
+  output(termfx::CLEAR_SCREEN, termfx::CURSOR_HOME);
+  output("Chess Game\n\n");
+  output("Select game mode:\n");
+  output("1. Player vs Player\n");
+  output("2. Player (White) vs AI (Black)\n");
+  output("3. AI (White) vs Player (Black)\n");
+  output("\nEnter choice (1-3): ");
+  
+  let mode_input: *byte = cast<*byte>(alloc(3 * sizeof<byte>));
+  defer { free(mode_input); }
+  term::get_line("", mode_input, 3);
+  
+  let game_mode: int = 1; // Default to PvP
+  if (string::strcmp(mode_input, "2") == 0) {
+    game_mode = 2; // Player is White, AI is Black
+  } elif (string::strcmp(mode_input, "3") == 0) {
+    game_mode = 3; // AI is White, Player is Black
+  }
+  
+  let ai_is_white: int = -cast<int>(game_mode == 3);
+  let ai_enabled: int = -cast<int>(game_mode != 1);
+
+  loop {
+    output(termfx::CLEAR_SCREEN, termfx::CURSOR_HOME);
+
+    if (white_to_move == 1) { output("White to move\n"); }
+    else { output("Black to move\n"); }
+    
+    // Show opening name if still in book
+    if (move_count > 0 && openings::is_in_book(moves, move_count) == 1) {
+      let opening_name: *byte = openings::get_opening_name(moves, move_count);
+      output("Opening: ", opening_name, "\n");
+    }
+    
+    board::print_board(&bd, moves, move_count);
+    
+    // Check if it's AI's turn
+    if (ai_enabled == 1 && 
+        ((ai_is_white == 1 && white_to_move == 1) || 
+         (ai_is_white == 0 && white_to_move == 0))) {
+      
+      output("\nAI is thinking...\n");
+      
+      let best_move: *Move = ai::find_best_move(&engine, &bd, white_to_move, moves, move_count);
+      
+      if (best_move == cast<*Move>(0)) {
+        output("AI has no legal moves! Game over.\n");
+        break;
+      }
+      
+      // Convert move to string
+      ai::move_to_string(best_move, user_input);
+      
+      // Check if this was a book move
+      if (engine.use_opening_book == 1 && openings::is_in_book(moves, move_count) == 1) {
+        output("AI plays (book): ", user_input, "\n");
+      } else {
+        output("AI plays: ", user_input, "\n");
+        output("Nodes searched: ", ai::get_nodes_searched(&engine), "\n");
+        output("Position eval: ", ai::evaluate_position(&bd), "\n");
+      }
+      
+      board::update_board(&bd, best_move, &white_to_move, &is_valid);
+      
+      if (is_valid == 0) {
+        string::copy(moves[move_count], user_input);
+        move_count = move_count + 1;
+      }
+      
+      is_valid = 0;
+      input<byte>("\nPress Enter to continue...");
+      output("\n");
+      
+    } else {
+      // Human player's turn
+      term::get_line("Enter your move (or 'exit', 'quit', 'q') => ", user_input, 5);
+      
+      if (string::strcmp(user_input, "exit") == 0 || 
+          string::strcmp(user_input, "quit") == 0 ||
+          string::strcmp(user_input, "q")    == 0) {
+        break;
+      }
+
+      let move: *Move = board::parse_move(&mv, user_input);
+      board::update_board(&bd, move, &white_to_move, &is_valid);
+      
+      if (is_valid == 0) {
+        string::copy(moves[move_count], user_input);
+        move_count = move_count + 1;
+      }
+      
+      is_valid = 0;
+      input<byte>("");
+      output("\n");
+    }
+  }
+  
+  return 0; 
+}
