@@ -15,6 +15,7 @@ const TTEntry -> struct {
 };
 
 // Transposition table - simple hash table
+const ZOBRIST_SIZE: int = 768; // 12 piece types * 64 squares
 const TT_SIZE: int = 65536;  // 64K entries (power of 2 for fast modulo)
 const TT_EXACT: int = 0;
 const TT_ALPHA: int = 1;
@@ -25,7 +26,8 @@ pub const AI -> struct {
   best_move: Move,
   use_opening_book: int,
   tt: *TTEntry,         
-  nodes_searched: int
+  nodes_searched: int,
+  zobrist_hash: *int,
 };
 
 // Piece values for evaluation
@@ -37,19 +39,6 @@ const QUEEN_VALUE:  int = 900;
 const KING_VALUE:   int = 20000;
 
 const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int;
-
-// Simple hash function for board position
-const hash_position -> fn (bd: *Board) int {
-  let hash: int = 0;
-  loop [i: int = 0](i < 64) : (++i) {
-    let piece_byte: byte = bd.squares[i];
-    if (piece_byte != '.') {
-      // Simple hash: piece value * position
-      hash = hash + (cast<int>(piece_byte) * (i + 1));
-    }
-  }
-  return hash;
-}
 
 // Initialize transposition table
 #returns_ownership
@@ -63,6 +52,13 @@ pub const init_ai -> fn (ai: *AI) void {
     ai.tt[i].score = 0;
     ai.tt[i].flag = TT_EXACT;
   }
+
+  // Initialize Zobrist table
+  ai.zobrist_hash = cast<*int>(alloc(ZOBRIST_SIZE * sizeof<int>));
+
+  loop [i: int = 0](i < ZOBRIST_SIZE) : (++i) {
+    ai.zobrist_hash[i] = (i * 2654435761) & 0xFFFFFFFF; // Knuth's multiplicative hash
+  }
   
   ai.nodes_searched = 0;
 }
@@ -70,9 +66,62 @@ pub const init_ai -> fn (ai: *AI) void {
 // Free transposition table
 #takes_ownership
 pub const free_ai -> fn (ai: *AI) void {
-  if (ai.tt != cast<*TTEntry>(0)) {
-    free(ai.tt);
+  if (ai.tt != cast<*TTEntry>(0)) free(ai.tt);
+  if (ai.zobrist_hash != cast<*int>(0)) free(ai.zobrist_hash);
+}
+
+// Get Zobrist table index for a piece on a square 
+const get_zobrist_index -> fn (piece_byte: byte, square: int) int {
+  if (piece_byte == '.') return -1;
+
+  // White pieces: P=0, N=1, B=2, R=3, Q=4, K=5
+  // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
+  let piece_index: int = -1;
+
+  switch (piece_byte) {
+    'P' -> { piece_index = 0; }
+    'N' -> { piece_index = 1; }
+    'B' -> { piece_index = 2; }
+    'R' -> { piece_index = 3; }
+    'Q' -> { piece_index = 4; }
+    'K' -> { piece_index = 5; }
+    'p' -> { piece_index = 6; }
+    'n' -> { piece_index = 7; }
+    'b' -> { piece_index = 8; }
+    'r' -> { piece_index = 9; }
+    'q' -> { piece_index = 10; }
+    'k' -> { piece_index = 11; }
   }
+
+  if (piece_index == -1) return -1;
+  return piece_index * 64 + square;
+}
+
+const hash_position -> fn (ai: *AI, bd: *Board) int {
+  let hash: int = 0;
+
+  loop [i: int = 0](i < 64) : (++i) {
+    let piece_byte: byte = bd.squares[i];
+    if (piece_byte == '.') continue;
+
+    let zobrist_index: int = get_zobrist_index(piece_byte, i);
+    if (zobrist_index >= 0 && zobrist_index < ZOBRIST_SIZE) {
+      hash = hash ^ ai.zobrist_hash[zobrist_index];
+    }
+  }
+  
+  // Include castling rights in hash
+  if (bd.white_can_castle_kingside  == 1) { hash = hash ^ 1; }
+  if (bd.white_can_castle_queenside == 1) { hash = hash ^ 2; }
+  if (bd.black_can_castle_kingside  == 1) { hash = hash ^ 4; }
+  if (bd.black_can_castle_queenside == 1) { hash = hash ^ 8; }
+  
+  // Include en passant in hash
+  if (bd.en_passant_col >= 0) {
+    hash = hash ^ (16 + bd.en_passant_col);
+  }
+
+  return hash;
 }
 
 // Store position in transposition table
@@ -158,6 +207,7 @@ const get_position_bonus -> fn (piece_byte: byte, square: int) int {
 }
 
 // Evaluate the current board position
+// ALWAYS returns from WHITE's perspective (positive = good for white, negative = good for black)
 pub const evaluate_position -> fn (bd: *Board) int {
   let score: int = 0;
   
@@ -371,11 +421,12 @@ const unmake_move -> fn (bd: *Board, mv: *Move, captured: byte) void {
 }
 
 // Minimax algorithm with alpha-beta pruning and transposition table
+// is_maximizing: 1 = White (wants to maximize), 0 = Black (wants to minimize)
 const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_maximizing: int) int {
   ai.nodes_searched = ai.nodes_searched + 1;
   
   // Check transposition table
-  let hash: int = hash_position(bd);
+  let hash: int = hash_position(ai, bd);
   let tt_score: int = 0;
   if (tt_probe(ai, hash, depth, alpha, beta, &tt_score) == 1) {
     return tt_score;
@@ -383,6 +434,7 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
   
   // Base case: depth 0 or game over
   if (depth == 0) {
+    // Evaluation is always from White's perspective
     return evaluate_position(bd);
   }
   
@@ -392,10 +444,11 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
   // If no legal moves, it's checkmate or stalemate
   if (move_count == 0) {
     if (board::is_king_in_check(bd, -cast<int>(is_maximizing == 1)) == 1) {
+      // Checkmate - prefer faster checkmates
       if (is_maximizing == 1) {
-        return -KING_VALUE - depth; // Prefer faster checkmates
+        return -KING_VALUE - depth; // White is checkmated (very bad for white)
       } else {
-        return KING_VALUE + depth;
+        return KING_VALUE + depth;  // Black is checkmated (very good for white)
       }
     }
     return 0; // Stalemate
@@ -407,6 +460,7 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
   let best_move: Move;
   
   if (is_maximizing == 1) {
+    // White's turn - maximize the score
     let max_eval: int = -KING_VALUE - 1000;
     let flag: int = TT_ALPHA;
     
@@ -416,31 +470,30 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
       let captured: byte = bd.squares[to_index];
       
       make_move(bd, &moves[i]);
-      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 0);
+      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 0);  // Next turn is Black (minimizing)
       unmake_move(bd, &moves[i], captured);
       
       if (eval > max_eval) {
         max_eval = eval;
         best_move = moves[i];
-        if (eval >= beta) {
-          flag = TT_BETA;
-        } elif (eval > alpha) {
-          flag = TT_EXACT;
-        }
+      }
+      
+      if (eval >= beta) {
+        flag = TT_BETA;
+        tt_store(ai, hash, depth, max_eval, flag, &best_move);
+        return beta; // Beta cutoff
       }
       
       if (eval > alpha) {
         alpha = eval;
-      }
-      
-      if (beta <= alpha) {
-        break; // Beta cutoff
+        flag = TT_EXACT;
       }
     }
     
     tt_store(ai, hash, depth, max_eval, flag, &best_move);
     return max_eval;
   } else {
+    // Black's turn - minimize the score
     let min_eval: int = KING_VALUE + 1000;
     let flag: int = TT_BETA;
     
@@ -450,25 +503,23 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
       let captured: byte = bd.squares[to_index];
       
       make_move(bd, &moves[i]);
-      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 1);
+      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 1);  // Next turn is White (maximizing)
       unmake_move(bd, &moves[i], captured);
       
       if (eval < min_eval) {
         min_eval = eval;
         best_move = moves[i];
-        if (eval <= alpha) {
-          flag = TT_ALPHA;
-        } elif (eval < beta) {
-          flag = TT_EXACT;
-        }
+      }
+      
+      if (eval <= alpha) {
+        flag = TT_ALPHA;
+        tt_store(ai, hash, depth, min_eval, flag, &best_move);
+        return alpha; // Alpha cutoff
       }
       
       if (eval < beta) {
         beta = eval;
-      }
-      
-      if (beta <= alpha) {
-        break; // Alpha cutoff
+        flag = TT_EXACT;
       }
     }
     
@@ -516,19 +567,25 @@ pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byt
     let captured: byte = bd.squares[to_index];
     
     make_move(bd, &legal_moves[i]);
-
-    let is_opp_maximizing: int = 0;
-    if (is_white == 0) { is_opp_maximizing = 1; } // Next move is opponent's
-
-    let eval: int = minimax(ai, bd, ai.depth - 1, -KING_VALUE - 1000, KING_VALUE + 1000, is_opp_maximizing); 
+    
+    // CRITICAL FIX: Pass the OPPONENT's perspective to minimax
+    // If White is moving, next turn is Black (0 = minimizing)
+    // If Black is moving, next turn is White (1 = maximizing)
+    let next_is_white: int = 0;
+    if (is_white == 0) { next_is_white = 1; }
+    
+    let eval: int = minimax(ai, bd, ai.depth - 1, -KING_VALUE - 1000, KING_VALUE + 1000, next_is_white); 
     unmake_move(bd, &legal_moves[i], captured);
     
+    // Pick the best move based on whose turn it is
     if (is_white == 1) {
+      // White wants to maximize
       if (eval > best_value) {
         best_value = eval;
         best_move_index = i;
       }
     } else {
+      // Black wants to minimize
       if (eval < best_value) {
         best_value = eval;
         best_move_index = i;
