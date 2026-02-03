@@ -246,13 +246,39 @@ const score_move -> fn (bd: *Board, mv: *Move) int {
     score = victim_value - attacker_value / 10;
   }
   
-  // TODO: Add other heuristics:
-  // - Checks
-  // - Promotions
-  // - Killer moves
-  // - History heuristic
+  // Promotions - Very high score 
+  let piece_upper: byte = attacker;
+  if (attacker >= 'a' && attacker <= 'z') {
+    piece_upper = cast<byte>(cast<int>(attacker) - 32);
+  }
+
+  if (piece_upper == 'P') {
+    if (mv.to_row == 0 || mv.to_row == 7) 
+      return 9000; // Promotions are almost as good as winning captures
+
+    if (piece::is_white_piece(attacker) == 1 && mv.to_row < mv.from_row) {
+      score = score + (mv.from_row - mv.to_row) * 10; // Reward advancing pawns
+    } elif (piece::is_black_piece(attacker) == 1 && mv.to_row > mv.from_row) {
+      score = score + (mv.to_row - mv.from_row) * 10; // Reward advancing pawns
+    }
+  }
+
+  // Central Squares - Bonus for controlling center 
+  let to_row: int = mv.to_row;
+  let to_col: int = mv.to_col;
+
+  if ((to_row == 3 || to_row == 4) && (to_col == 3 || to_col == 4)) 
+    score = score + 20; // Center control bonus
+  elif ((to_row >= 2 && to_row <= 5) && (to_col >= 2 && to_col <= 5)) 
+    score = score + 10; // Near center bonus
   
   return score;
+}
+
+const is_capture -> fn (bd: *Board, mv: *Move) int {
+  let to_index: int = mv.to_row * 8 + mv.to_col;
+  let target: byte = bd.squares[to_index];
+  return cast<int>(target != '.');
 }
 
 // Sort moves by score (bubble sort - simple but effective for small lists)
@@ -304,6 +330,70 @@ pub const generate_moves -> fn (bd: *Board, is_white: int, moves: *Move, max_mov
       };
       
       // Check if this move is legal
+      if (is_move_valid(bd, &mv, is_white) == 1) {
+        moves[move_count] = mv;
+        move_count = move_count + 1;
+      }
+    }
+  }
+  
+  return move_count;
+}
+
+pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_moves: int) int {
+  let move_count: int = 0;
+  
+  loop [from: int = 0](from < 64 && move_count < max_moves) : (++from) {
+    let piece_byte: byte = bd.squares[from];
+    if (piece_byte == '.') { continue; }
+    
+    // Skip pieces that don't match the current color
+    if (is_white == 1 && piece::is_white_piece(piece_byte) == 0) { continue; }
+    if (is_white == 0 && piece::is_black_piece(piece_byte) == 0) { continue; }
+    
+    let from_row: int = from / 8;
+    let from_col: int = from % 8;
+    
+    // Try all possible destination squares
+    loop [to: int = 0](to < 64 && move_count < max_moves) : (++to) {
+      if (from == to) { continue; }
+      
+      let target: byte = bd.squares[to];
+      
+      // ONLY consider captures (or en passant)
+      if (target == '.') {
+        // Check for en passant
+        let to_row: int = to / 8;
+        let to_col: int = to % 8;
+        
+        if (piece_byte == 'P' || piece_byte == 'p') {
+          let mv_temp: Move = {
+            from_row: from_row,
+            from_col: from_col,
+            to_row: to_row,
+            to_col: to_col
+          };
+          
+          let is_white_piece: int = piece::is_white_piece(piece_byte);
+          if (board::is_en_passant_move(bd, &mv_temp, piece_byte, is_white_piece) == 0) {
+            continue;  // Not a capture, skip it
+          }
+        } else {
+          continue;  // Not a capture, skip it
+        }
+      }
+      
+      let to_row: int = to / 8;
+      let to_col: int = to % 8;
+      
+      let mv: Move = {
+        from_row: from_row,
+        from_col: from_col,
+        to_row: to_row,
+        to_col: to_col
+      };
+      
+      // Check if this capture is legal
       if (is_move_valid(bd, &mv, is_white) == 1) {
         moves[move_count] = mv;
         move_count = move_count + 1;
@@ -420,6 +510,113 @@ const unmake_move -> fn (bd: *Board, mv: *Move, captured: byte) void {
   bd.squares[to_index] = captured;
 }
 
+// Quiescence search - search only tactical moves until position is quiet
+const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizing: int) int {
+  ai.nodes_searched = ai.nodes_searched + 1;
+  
+  // Stand-pat score: evaluation of current position
+  let stand_pat: int = evaluate_position(bd);
+  
+  if (is_maximizing == 1) {
+    // White to move
+    if (stand_pat >= beta) {
+      return beta;  // Beta cutoff - position is already too good
+    }
+    if (stand_pat > alpha) {
+      alpha = stand_pat;  // Raise alpha
+    }
+  } else {
+    // Black to move
+    if (stand_pat <= alpha) {
+      return alpha;  // Alpha cutoff - position is already too bad
+    }
+    if (stand_pat < beta) {
+      beta = stand_pat;  // Lower beta
+    }
+  }
+  
+  // Generate only captures
+  let captures: [Move; 64];
+  let capture_count: int = generate_captures(bd, is_maximizing, &captures[0], 64);
+  
+  // If no captures, return stand-pat score
+  if (capture_count == 0) {
+    return stand_pat;
+  }
+  
+  // Sort captures by MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
+  sort_moves(bd, &captures[0], capture_count);
+  
+  if (is_maximizing == 1) {
+    // White maximizes
+    let max_eval: int = stand_pat;
+    
+    loop [i: int = 0](i < capture_count) : (++i) {
+      let from_index: int = captures[i].from_row * 8 + captures[i].from_col;
+      let to_index: int = captures[i].to_row * 8 + captures[i].to_col;
+      let captured: byte = bd.squares[to_index];
+      
+      // Delta pruning: if capturing this piece can't improve alpha, skip it
+      let victim_value: int = get_piece_value(captured);
+      if (stand_pat + victim_value + 200 < alpha) {
+        continue;  // Even best-case scenario won't beat alpha
+      }
+      
+      make_move(bd, &captures[i]);
+      let eval: int = quiescence(ai, bd, alpha, beta, 0);
+      unmake_move(bd, &captures[i], captured);
+      
+      if (eval > max_eval) {
+        max_eval = eval;
+      }
+      
+      if (eval >= beta) {
+        return beta;  // Beta cutoff
+      }
+      
+      if (eval > alpha) {
+        alpha = eval;
+      }
+    }
+    
+    return max_eval;
+  } else {
+    // Black minimizes
+    let min_eval: int = stand_pat;
+    
+    loop [i: int = 0](i < capture_count) : (++i) {
+      let from_index: int = captures[i].from_row * 8 + captures[i].from_col;
+      let to_index: int = captures[i].to_row * 8 + captures[i].to_col;
+      let captured: byte = bd.squares[to_index];
+      
+      // Delta pruning
+      let victim_value: int = get_piece_value(captured);
+      if (stand_pat - victim_value - 200 > beta) {
+        continue;
+      }
+      
+      make_move(bd, &captures[i]);
+      let eval: int = quiescence(ai, bd, alpha, beta, 1);
+      unmake_move(bd, &captures[i], captured);
+      
+      if (eval < min_eval) {
+        min_eval = eval;
+      }
+      
+      if (eval <= alpha) {
+        return alpha;  // Alpha cutoff
+      }
+      
+      if (eval < beta) {
+        beta = eval;
+      }
+    }
+    
+    return min_eval;
+  }
+}
+
+// TODO: Implement the optimizations into the minimax function
 // Minimax algorithm with alpha-beta pruning and transposition table
 // is_maximizing: 1 = White (wants to maximize), 0 = Black (wants to minimize)
 const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_maximizing: int) int {
@@ -435,7 +632,7 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
   // Base case: depth 0 or game over
   if (depth == 0) {
     // Evaluation is always from White's perspective
-    return evaluate_position(bd);
+    return quiescence(ai, bd, alpha, beta, is_maximizing);
   }
   
   let moves: [Move; 218];
@@ -574,7 +771,15 @@ pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byt
     let next_is_white: int = 0;
     if (is_white == 0) { next_is_white = 1; }
     
-    let eval: int = minimax(ai, bd, ai.depth - 1, -KING_VALUE - 1000, KING_VALUE + 1000, next_is_white); 
+    let window: int = 50;
+    let alpha_start: int = -window;
+    let beta_start:  int =  window;
+    let eval: int = minimax(ai, bd, ai.depth - 1, alpha_start, beta_start, next_is_white);
+    
+    // if we fall outside the window, re-search with full width
+    if (eval <= alpha_start || eval >= beta_start)
+      eval = minimax(ai, bd, ai.depth - 1, -KING_VALUE - 1000, KING_VALUE + 1000, next_is_white);
+
     unmake_move(bd, &legal_moves[i], captured);
     
     // Pick the best move based on whose turn it is

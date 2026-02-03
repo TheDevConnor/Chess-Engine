@@ -3,10 +3,11 @@
 @use "std_terminal" as term
 @use "std_string" as string
 @use "std_termfx" as termfx
+@use "openings" as openings
 @use "std_memory" as mem
+@use "std_time" as time
 @use "board" as board
 @use "ai" as ai
-@use "openings" as openings
 
 pub const main -> fn () int { 
   let bd: Board;
@@ -77,6 +78,7 @@ pub const main -> fn () int {
         ((ai_is_white == 1 && white_to_move == 1) || 
          (ai_is_white == 0 && white_to_move == 0))) {
       
+      let start_time: Timer = time::timer_start(); 
       output("\nAI is thinking...\n");
       
       let best_move: *Move = ai::find_best_move(&engine, &bd, white_to_move, moves, move_count);
@@ -97,6 +99,8 @@ pub const main -> fn () int {
         output("Nodes searched: ", ai::get_nodes_searched(&engine), "\n");
         output("Position eval: ", ai::evaluate_position(&bd), "\n");
       }
+      let elapsed_ms: int = time::timer_elapsed_ms(start_time);
+      output("Time taken: ", elapsed_ms, " ms\n");
       
       board::update_board(&bd, best_move, &white_to_move, &is_valid);
       
