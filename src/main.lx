@@ -1,40 +1,50 @@
 @module "main"
 
-@use "std_terminal" as term
-@use "std_string" as string
+@use "std_cstring" as cstring
 @use "std_termfx" as termfx
 @use "openings" as openings
-@use "std_memory" as mem
 @use "std_time" as time
 @use "board" as board
 @use "ai" as ai
 
-pub const main -> fn () int { 
-  let bd: Board;
-  let mv: Move;
+// Read a line of at most `size - 1` bytes into `buffer`, null-terminated.
+const read_line -> fn (prompt: *byte, buffer: *byte, size: i64) void {
+  output(prompt);
+  let i: i64 = 0;
+  loop (i < size - 1) : (++i) {
+    let c: byte = input<byte>("");
+    if (c == '\n' || c == '\r') { break; }
+    buffer[i] = c;
+  }
+  buffer[i] = '\0';
+}
+
+pub const main -> fn () i64 { 
+  let bd: board::Board;
+  let mv: board::Move;
   board::init_board(&bd);
 
   // Initialize AI
-  let engine: AI;
+  let engine: ai::AI;
   engine.depth = 6;  
   engine.use_opening_book = 1;
   
   ai::init_ai(&engine);
   let user_input: *byte = cast<*byte>(alloc(5 * sizeof<byte>));
   let moves: **byte = cast<**byte>(alloc(256 * sizeof<*byte>));
-  loop [j: int = 0](j < 256) : (++j) { 
+  loop [j: i64 = 0](j < 256) : (++j) { 
     moves[j] = cast<*byte>(alloc(6 * sizeof<byte>)); 
   } 
 
   defer { 
     free(bd.squares); free(user_input); ai::free_ai(&engine);
-    loop [j: int = 0](j < 256) : (++j) { free(moves[j]); } 
+    loop [j: i64 = 0](j < 256) : (++j) { free(moves[j]); } 
     free(moves); 
   }
   
-  let white_to_move: int = 1;  // 1 = white's turn, 0 = black's turn
-  let move_count: int = 0;
-  let is_valid: int = 0;
+  let white_to_move: i64 = 1;  // 1 = white's turn, 0 = black's turn
+  let move_count: i64 = 0;
+  let is_valid: i64 = 0;
   
   // Ask if player wants to play against AI
   output(termfx::CLEAR_SCREEN, termfx::CURSOR_HOME);
@@ -47,17 +57,17 @@ pub const main -> fn () int {
   
   let mode_input: *byte = cast<*byte>(alloc(3 * sizeof<byte>));
   defer { free(mode_input); }
-  term::get_line("", mode_input, 3);
+  read_line("", mode_input, 3);
   
-  let game_mode: int = 1; // Default to PvP
-  if (string::strcmp(mode_input, "2") == 0) {
+  let game_mode: i64 = 1; // Default to PvP
+  if (cstring::strcmp(mode_input, "2") == 0) {
     game_mode = 2; // Player is White, AI is Black
-  } elif (string::strcmp(mode_input, "3") == 0) {
+  } elif (cstring::strcmp(mode_input, "3") == 0) {
     game_mode = 3; // AI is White, Player is Black
   }
   
-  let ai_is_white: int = -cast<int>(game_mode == 3);
-  let ai_enabled: int = -cast<int>(game_mode != 1);
+  let ai_is_white: i64 = -cast<i64>(game_mode == 3);
+  let ai_enabled: i64 = -cast<i64>(game_mode != 1);
 
   loop {
     output(termfx::CLEAR_SCREEN, termfx::CURSOR_HOME);
@@ -78,12 +88,12 @@ pub const main -> fn () int {
         ((ai_is_white == 1 && white_to_move == 1) || 
          (ai_is_white == 0 && white_to_move == 0))) {
       
-      let start_time: Timer = time::timer_start(); 
+      let start_time: time::Timer = time::timer_start(); 
       output("\nAI is thinking...\n");
       
-      let best_move: *Move = ai::find_best_move(&engine, &bd, white_to_move, moves, move_count);
+      let best_move: *board::Move = ai::find_best_move(&engine, &bd, white_to_move, moves, move_count);
       
-      if (best_move == cast<*Move>(0)) {
+      if (best_move == cast<*board::Move>(0)) {
         output("AI has no legal moves! Game over.\n");
         break;
       }
@@ -99,13 +109,13 @@ pub const main -> fn () int {
         output("Nodes searched: ", ai::get_nodes_searched(&engine), "\n");
         output("Position eval: ", ai::evaluate_position(&bd), "\n");
       }
-      let elapsed_ms: int = time::timer_elapsed_ms(start_time);
+      let elapsed_ms: i64 = time::timer_elapsed_ms(start_time);
       output("Time taken: ", elapsed_ms, " ms\n");
       
       board::update_board(&bd, best_move, &white_to_move, &is_valid);
       
       if (is_valid == 0) {
-        string::copy(moves[move_count], user_input);
+        cstring::copy(moves[move_count], user_input);
         move_count = move_count + 1;
       }
       
@@ -115,19 +125,19 @@ pub const main -> fn () int {
       
     } else {
       // Human player's turn
-      term::get_line("Enter your move (or 'exit', 'quit', 'q') => ", user_input, 5);
+      read_line("Enter your move (or 'exit', 'quit', 'q') => ", user_input, 5);
       
-      if (string::strcmp(user_input, "exit") == 0 || 
-          string::strcmp(user_input, "quit") == 0 ||
-          string::strcmp(user_input, "q")    == 0) {
+      if (cstring::strcmp(user_input, "exit") == 0 || 
+          cstring::strcmp(user_input, "quit") == 0 ||
+          cstring::strcmp(user_input, "q")    == 0) {
         break;
       }
 
-      let move: *Move = board::parse_move(&mv, user_input);
+      let move: *board::Move = board::parse_move(&mv, user_input);
       board::update_board(&bd, move, &white_to_move, &is_valid);
       
       if (is_valid == 0) {
-        string::copy(moves[move_count], user_input);
+        cstring::copy(moves[move_count], user_input);
         move_count = move_count + 1;
       }
       

@@ -1,16 +1,15 @@
 
 @module "openings"
 
-@use "std_string" as string
 @use "board" as board
 
 pub const OpeningLine -> struct {
   name: *byte,
   moves: *byte,      
-  move_count: int
+  move_count: i64
 };
 
-const OpeningBookSize: int = 68;
+const OpeningBookSize: i64 = 68;
 const OPENING_BOOK: [OpeningLine; 68] = [
   // Italian Game
   OpeningLine { name: "Italian Game",                moves: "e2e4 e7e5 g1f3 b8c6 f1c4",           move_count: 5 },
@@ -143,8 +142,8 @@ const OPENING_BOOK: [OpeningLine; 68] = [
   OpeningLine { name: "Benko Gambit",                moves: "d2d4 g8f6 c2c4 c7c5 d4d5 b7b5",           move_count: 6 },
 ];
 
-const parse_move_str -> fn (mv: *Move, move_str: *byte, offset: int) int {
-  let idx: int = offset;
+const parse_move_str -> fn (mv: *board::Move, move_str: *byte, offset: i64) i64 {
+  let idx: i64 = offset;
   
   // Skip whitespace
   loop (move_str[idx] == ' ') : (++idx) {}
@@ -156,28 +155,28 @@ const parse_move_str -> fn (mv: *Move, move_str: *byte, offset: int) int {
   let to_col: byte = move_str[idx + 2];
   let to_row: byte = move_str[idx + 3];
   
-  mv.from_col = cast<int>(from_col) - cast<int>('a');
-  mv.from_row = 7 - (cast<int>(from_row) - cast<int>('1'));
-  mv.to_col = cast<int>(to_col) - cast<int>('a');
-  mv.to_row = 7 - (cast<int>(to_row) - cast<int>('1'));
+  mv.from_col = cast<i64>(from_col) - cast<i64>('a');
+  mv.from_row = 7 - (cast<i64>(from_row) - cast<i64>('1'));
+  mv.to_col = cast<i64>(to_col) - cast<i64>('a');
+  mv.to_row = 7 - (cast<i64>(to_row) - cast<i64>('1'));
   
   return idx + 4; 
 }
 
-const matches_opening_line -> fn (moves: **byte, move_count: int, line: *OpeningLine) int {
+const matches_opening_line -> fn (moves: **byte, move_count: i64, line: *OpeningLine) i64 {
   if (move_count >= line.move_count) { return 0; }
   
-  let mv: Move;
-  let offset: int = 0;
+  let mv: board::Move;
+  let offset: i64 = 0;
   
-  loop [i: int = 0](i < move_count) : (++i) {
+  loop [i: i64 = 0](i < move_count) : (++i) {
     offset = parse_move_str(&mv, line.moves, offset);
     if (offset == -1) { return 0; }
     
-    let actual_from_col: int = cast<int>(moves[i][0]) - cast<int>('a');
-    let actual_from_row: int = 7 - (cast<int>(moves[i][1]) - cast<int>('1'));
-    let actual_to_col: int = cast<int>(moves[i][2]) - cast<int>('a');
-    let actual_to_row: int = 7 - (cast<int>(moves[i][3]) - cast<int>('1'));
+    let actual_from_col: i64 = cast<i64>(moves[i][0]) - cast<i64>('a');
+    let actual_from_row: i64 = 7 - (cast<i64>(moves[i][1]) - cast<i64>('1'));
+    let actual_to_col: i64 = cast<i64>(moves[i][2]) - cast<i64>('a');
+    let actual_to_row: i64 = 7 - (cast<i64>(moves[i][3]) - cast<i64>('1'));
     
     if (mv.from_col != actual_from_col || mv.from_row != actual_from_row ||
         mv.to_col != actual_to_col || mv.to_row != actual_to_row) {
@@ -190,13 +189,13 @@ const matches_opening_line -> fn (moves: **byte, move_count: int, line: *Opening
   return 1; 
 }
 
-pub const get_book_move -> fn (moves: **byte, move_count: int, result_move: *Move) int {
-  loop [i: int = 0](i < OpeningBookSize) : (++i) {
+pub const get_book_move -> fn (moves: **byte, move_count: i64, result_move: *board::Move) i64 {
+  loop [i: i64 = 0](i < OpeningBookSize) : (++i) {
     if (matches_opening_line(moves, move_count, &OPENING_BOOK[i]) == 1) {
-      let offset: int = 0;
-      let mv: Move;
+      let offset: i64 = 0;
+      let mv: board::Move;
       
-      loop [j: int = 0](j <= move_count) : (++j) {
+      loop [j: i64 = 0](j <= move_count) : (++j) {
         let move_str: *byte = OPENING_BOOK[i].moves;
         offset = parse_move_str(&mv, move_str, offset);
         if (offset == -1) { return 0; }
@@ -215,11 +214,11 @@ pub const get_book_move -> fn (moves: **byte, move_count: int, result_move: *Mov
   return 0; 
 }
 
-pub const get_opening_name -> fn (moves: **byte, move_count: int) *byte {
+pub const get_opening_name -> fn (moves: **byte, move_count: i64) *byte {
   let best_match_name: *byte = "Unknown Opening";
-  let best_match_length: int = 0;
+  let best_match_length: i64 = 0;
   
-  loop [i: int = 0](i < OpeningBookSize) : (++i) {
+  loop [i: i64 = 0](i < OpeningBookSize) : (++i) {
     if (matches_opening_line(moves, move_count, &OPENING_BOOK[i]) == 1) {
       if (OPENING_BOOK[i].move_count > best_match_length) {
         best_match_length = OPENING_BOOK[i].move_count;
@@ -231,8 +230,8 @@ pub const get_opening_name -> fn (moves: **byte, move_count: int) *byte {
   return best_match_name;
 }
 
-pub const is_in_book -> fn (moves: **byte, move_count: int) int {
-  loop [i: int = 0](i < OpeningBookSize) : (++i) {
+pub const is_in_book -> fn (moves: **byte, move_count: i64) i64 {
+  loop [i: i64 = 0](i < OpeningBookSize) : (++i) {
     if (matches_opening_line(moves, move_count, &OPENING_BOOK[i]) == 1) {
       return 1;
     }

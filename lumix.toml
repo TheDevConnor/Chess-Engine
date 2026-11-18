@@ -1,0 +1,10 @@
+[project]
+name      = "chess"
+directory = "src"
+entry     = "src/main.lx"
+
+[build]
+flags = ""
+
+[output]
+binary_dir = "bin"

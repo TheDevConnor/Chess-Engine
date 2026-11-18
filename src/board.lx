@@ -1,28 +1,29 @@
 @module "board"
 
-@use "std_string" as string
+@use "std_cstring" as cstring
+@use "std_termfx" as termfx
 @use "piece" as piece
 
 pub const Move -> struct {
-  from_col: int,
-  from_row: int,
-  to_col: int,
-  to_row: int
+  from_col: i64,
+  from_row: i64,
+  to_col: i64,
+  to_row: i64
 };
 
 pub const Board -> struct {
   starting_fen: *byte,
-  length_fen: int,
+  length_fen: i64,
   squares: *byte,
 
-  white_can_castle_kingside:  int,
-  white_can_castle_queenside: int,
-  black_can_castle_kingside:  int,
-  black_can_castle_queenside: int,
+  white_can_castle_kingside:  i64,
+  white_can_castle_queenside: i64,
+  black_can_castle_kingside:  i64,
+  black_can_castle_queenside: i64,
   
   // En passant tracking
-  en_passant_col: int,  // Column where en passant is possible (-1 if not possible)
-  en_passant_row: int   // Row where the enemy pawn is located
+  en_passant_col: i64,  // Column where en passant is possible (-1 if not possible)
+  en_passant_row: i64   // Row where the enemy pawn is located
 };
 
 pub const parse_fen -> fn (bd: *Board) void; 
@@ -33,7 +34,7 @@ pub const init_board -> fn (bd: *Board) *Board {
 
   // Initialize the chess board with starting positions
   bd.starting_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-  bd.length_fen = string::strlen(bd.starting_fen);
+  bd.length_fen = cstring::strlen(bd.starting_fen);
 
   bd.white_can_castle_kingside  = 0;
   bd.white_can_castle_queenside = 0;
@@ -50,9 +51,9 @@ pub const init_board -> fn (bd: *Board) *Board {
 }
 
 pub const parse_fen -> fn (bd: *Board) void {
-  let i: int = 0;
-  let row: int = 0;
-  let col: int = 0;
+  let i: i64 = 0;
+  let row: i64 = 0;
+  let col: i64 = 0;
   
   // Part 1: Parse piece placement
   loop (i < bd.length_fen && bd.starting_fen[i] != ' ') : (++i) {
@@ -61,8 +62,8 @@ pub const parse_fen -> fn (bd: *Board) void {
       row = row + 1;
       col = 0;
     } elif (c >= '1' && c <= '8') {
-      let empty_squares: int = cast<int>(c - '0');
-      loop [j: int = 0](j < empty_squares) : (++j) {
+      let empty_squares: i64 = cast<i64>(c - '0');
+      loop [j: i64 = 0](j < empty_squares) : (++j) {
         bd.squares[row * 8 + col] = '.';
         col = col + 1;
       }
@@ -113,8 +114,8 @@ pub const parse_fen -> fn (bd: *Board) void {
       let ep_row: byte = bd.starting_fen[i];
       
       // Convert to our coordinate system
-      bd.en_passant_col = cast<int>(ep_col) - cast<int>('a');
-      let target_row: int = 7 - (cast<int>(ep_row) - cast<int>('1'));
+      bd.en_passant_col = cast<i64>(ep_col) - cast<i64>('a');
+      let target_row: i64 = 7 - (cast<i64>(ep_row) - cast<i64>('1'));
       
       // The en passant row is where the pawn that can be captured is located
       // If the target square is row 2 (from white's perspective), the pawn is on row 3
@@ -141,39 +142,39 @@ pub const parse_move -> fn (mv: *Move, move: *byte) *Move {
   let to_col: byte = move[2];
   let to_row: byte = move[3];
 
-  mv.from_col = cast<int>(from_col) - cast<int>('a');
-  mv.from_row = 7 - (cast<int>(from_row) - cast<int>('1'));  
-  mv.to_col = cast<int>(to_col) - cast<int>('a');
-  mv.to_row = 7 - (cast<int>(to_row) - cast<int>('1'));      
+  mv.from_col = cast<i64>(from_col) - cast<i64>('a');
+  mv.from_row = 7 - (cast<i64>(from_row) - cast<i64>('1'));  
+  mv.to_col = cast<i64>(to_col) - cast<i64>('a');
+  mv.to_row = 7 - (cast<i64>(to_row) - cast<i64>('1'));      
 
   return mv;
 }
 
-pub const validate_pawn_path -> fn (bd: *Board, mv: *Move, dr: int, dc: int) int {
+pub const validate_pawn_path -> fn (bd: *Board, mv: *Move, dr: i64, dc: i64) i64 {
   if (dc == 0 && (dr == -2 || dr == 2)) {
-    let mid_row: int = (mv.from_row + mv.to_row) / 2;
+    let mid_row: i64 = (mv.from_row + mv.to_row) / 2;
     let mid: byte = bd.squares[mid_row * 8 + mv.from_col];
     if (mid != '.') { return 0; } 
   }
   return 1;
 }
 
-pub const is_path_clear -> fn (bd: *Board, mv: *Move) int {
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+pub const is_path_clear -> fn (bd: *Board, mv: *Move) i64 {
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   
-  let step_c: int;
+  let step_c: i64;
   if (dc == 0) { step_c = 0;
   } elif (dc > 0) { step_c = 1;
   } else { step_c = -1; }
   
-  let step_r: int;
+  let step_r: i64;
   if (dr == 0) { step_r = 0;
   } elif (dr > 0) { step_r = 1;
   } else { step_r = -1; }
   
-  let curr_col: int = mv.from_col + step_c;
-  let curr_row: int = mv.from_row + step_r;
+  let curr_col: i64 = mv.from_col + step_c;
+  let curr_row: i64 = mv.from_row + step_r;
   
   loop (curr_col != mv.to_col || curr_row != mv.to_row) {
     if (bd.squares[curr_row * 8 + curr_col] != '.') {
@@ -187,9 +188,9 @@ pub const is_path_clear -> fn (bd: *Board, mv: *Move) int {
   return 1;
 }
 
-pub const is_move_legal -> fn (rule: *PieceRules, bd: *Board, mv: *Move) int {
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+pub const is_move_legal -> fn (rule: *piece::PieceRules, bd: *Board, mv: *Move) i64 {
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   if (piece::can_move_direction(rule, dc, dr) == 0) { return 0; }
   if (rule.can_slide == 1 && rule.can_jump == 0) {
     if (is_path_clear(bd, mv) == 0) { return 0; }
@@ -197,16 +198,16 @@ pub const is_move_legal -> fn (rule: *PieceRules, bd: *Board, mv: *Move) int {
   return 1;
 }
 
-pub const is_king_in_check -> fn (bd: *Board, is_white: int) int {
+pub const is_king_in_check -> fn (bd: *Board, is_white: i64) i64 {
   let king_byte: byte; 
   if (is_white == 1) { king_byte = 'K'; } 
   else { king_byte = 'k'; }
   
-  let king_row: int = -1;
-  let king_col: int = -1;
+  let king_row: i64 = -1;
+  let king_col: i64 = -1;
 
   // Find the king position
-  loop [i: int = 0](i < 64) : (++i) {
+  loop [i: i64 = 0](i < 64) : (++i) {
     if (bd.squares[i] == king_byte) {
       king_row = i / 8;
       king_col = i % 8;
@@ -214,7 +215,7 @@ pub const is_king_in_check -> fn (bd: *Board, is_white: int) int {
     }
   }
 
-  loop [i: int = 0](i < 64) : (++i) {
+  loop [i: i64 = 0](i < 64) : (++i) {
     let ch: byte = bd.squares[i];
     if (ch == '.') { continue; }
 
@@ -222,13 +223,13 @@ pub const is_king_in_check -> fn (bd: *Board, is_white: int) int {
     if (is_white == 1 && piece::is_white_piece(ch) == 1) { continue; }
     if (is_white == 0 && piece::is_black_piece(ch) == 1) { continue; }
 
-    let rule: *PieceRules = piece::get_rules(ch);
-    if (rule == cast<*PieceRules>(0)) { continue; }
+    let rule: *piece::PieceRules = piece::get_rules(ch);
+    if (rule == cast<*piece::PieceRules>(0)) { continue; }
 
-    let from_row: int = i / 8;
-    let from_col: int = i % 8;
-    let dr: int = king_row - from_row;
-    let dc: int = king_col - from_col;
+    let from_row: i64 = i / 8;
+    let from_col: i64 = i % 8;
+    let dr: i64 = king_row - from_row;
+    let dc: i64 = king_col - from_col;
 
     // Special handling for pawn attacks
     if (ch == 'P' || ch == 'p') {
@@ -239,18 +240,18 @@ pub const is_king_in_check -> fn (bd: *Board, is_white: int) int {
     }
 
     // Check if move direction matches the piece's legal move
-    let can_attack: int = piece::can_move_direction(rule, dc, dr);
+    let can_attack: i64 = piece::can_move_direction(rule, dc, dr);
     if (can_attack == 0) { continue; }
 
     // Check path clearance for sliding pieces
     if (rule.can_slide == 1 && rule.can_jump == 0) {
-      let mv: Move = { 
+      let mv: Move = Move { 
         from_row: from_row, 
         from_col: from_col, 
         to_row: king_row, 
         to_col: king_col 
       };
-      let clear: int = is_path_clear(bd, &mv);
+      let clear: i64 = is_path_clear(bd, &mv);
       if (clear == 0) { continue; }
     }
 
@@ -261,10 +262,10 @@ pub const is_king_in_check -> fn (bd: *Board, is_white: int) int {
   return 0;
 }
 
-pub const is_castling_move -> fn (mv: *Move, piece: byte) int {
+pub const is_castling_move -> fn (mv: *Move, piece: byte) i64 {
   // King must move exactly 2 squares horizontally
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   
   if (dr != 0) { return 0; }  // Must be on same rank
   if (piece != 'K' && piece != 'k') { return 0; }  // Must be king
@@ -273,11 +274,11 @@ pub const is_castling_move -> fn (mv: *Move, piece: byte) int {
   return 1;
 }
 
-pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_white: int) int {
-  let dc: int = mv.to_col - mv.from_col;
+pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i64) i64 {
+  let dc: i64 = mv.to_col - mv.from_col;
   
   // Determine which side
-  let is_kingside: int = -cast<int>(dc > 0);
+  let is_kingside: i64 = -cast<i64>(dc > 0);
   
   // Check if player has castling rights
   if (is_white == 1 && is_kingside == 1 && bd.white_can_castle_kingside == 0) { return 0; }
@@ -286,11 +287,11 @@ pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_wh
   if (is_white == 0 && is_kingside == 0 && bd.black_can_castle_queenside == 0) { return 0; }
   
   // Check if king is in check
-  if (is_king_in_check(bd, -cast<int>(is_white == 1)) == 1) { return 0; }
+  if (is_king_in_check(bd, -cast<i64>(is_white == 1)) == 1) { return 0; }
   
-  let row: int = mv.from_row;
-  let rook_col: int;
-  let king_path_col: int;
+  let row: i64 = mv.from_row;
+  let rook_col: i64;
+  let king_path_col: i64;
   
   if (is_kingside == 1) {
     rook_col = 7;
@@ -306,8 +307,8 @@ pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_wh
   if (is_white == 0 && rook != 'r') { return 0; }
   
   // Check path is clear
-  let start_col: int;
-  let end_col: int;
+  let start_col: i64;
+  let end_col: i64;
   if (is_kingside == 1) {
     start_col = mv.from_col + 1;
     end_col = rook_col;
@@ -316,7 +317,7 @@ pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_wh
     end_col = mv.from_col;
   }
   
-  loop [col: int = start_col](col < end_col) : (++col) {
+  loop [col: i64 = start_col](col < end_col) : (++col) {
     if (bd.squares[row * 8 + col] != '.') { return 0; }
   }
   
@@ -326,7 +327,7 @@ pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_wh
   
   bd.squares[row * 8 + king_path_col] = piece;
   bd.squares[row * 8 + mv.from_col] = '.';
-  let passes_through_check: int = is_king_in_check(bd, is_white);
+  let passes_through_check: i64 = is_king_in_check(bd, is_white);
   bd.squares[row * 8 + mv.from_col] = original_from;
   bd.squares[row * 8 + king_path_col] = original_path;
   
@@ -335,12 +336,12 @@ pub const handle_castling_check -> fn (bd: *Board, mv: *Move, piece: byte, is_wh
   return 1;
 }
 
-pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: int) int {
-  let dc: int = mv.to_col - mv.from_col;
+pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i64) i64 {
+  let dc: i64 = mv.to_col - mv.from_col;
   
   // Determine which side
-  let is_kingside: int = -cast<int>(dc == 2);
-  let is_queenside: int = -cast<int>(dc == -2);
+  let is_kingside: i64 = -cast<i64>(dc == 2);
+  let is_queenside: i64 = -cast<i64>(dc == -2);
   
   // Check castling rights
   if (is_white == 1 && is_kingside  == 1 && bd.white_can_castle_kingside  == 0) { return 0; }
@@ -352,8 +353,8 @@ pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i
   if (is_king_in_check(bd, is_white) == 1) { return 0; }
   
   // Determine rook position and path
-  let rook_col: int;
-  let king_path_col: int;  // Square king passes through
+  let rook_col: i64;
+  let king_path_col: i64;  // Square king passes through
   
   if (is_kingside == 1) {
     rook_col = 7;
@@ -363,7 +364,7 @@ pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i
     king_path_col = mv.from_col - 1;
   }
   
-  let row: int = mv.from_row;
+  let row: i64 = mv.from_row;
   
   // Verify rook is present
   let rook: byte = bd.squares[row * 8 + rook_col];
@@ -371,8 +372,8 @@ pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i
   if (is_white == 0 && rook != 'r') { return 0; }
   
   // Check path is clear between king and rook
-  let start_col: int;
-  let end_col: int;
+  let start_col: i64;
+  let end_col: i64;
   if (is_kingside == 1) {
     start_col = mv.from_col + 1;
     end_col = rook_col;
@@ -381,14 +382,14 @@ pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i
     end_col = mv.from_col;
   }
   
-  loop [col: int = start_col](col < end_col) : (++col) {
+  loop [col: i64 = start_col](col < end_col) : (++col) {
     if (bd.squares[row * 8 + col] != '.') { return 0; }
   }
   
   // Check that king doesnt pass through check
   bd.squares[row * 8 + king_path_col] = piece;
   bd.squares[row * 8 + mv.from_col] = '.';
-  let passes_through_check: int = is_king_in_check(bd, is_white);
+  let passes_through_check: i64 = is_king_in_check(bd, is_white);
   bd.squares[row * 8 + mv.from_col] = piece;
   bd.squares[row * 8 + king_path_col] = '.';
   
@@ -399,7 +400,7 @@ pub const handle_castling -> fn (bd: *Board, mv: *Move, piece: byte, is_white: i
   bd.squares[row * 8 + mv.from_col] = '.';
   
   // Move rook
-  let new_rook_col: int;
+  let new_rook_col: i64;
   if (is_kingside == 1) {
     new_rook_col = mv.from_col + 1;
   } else {
@@ -438,15 +439,15 @@ pub const update_castling_rights -> fn (bd: *Board, mv: *Move, piece: byte) void
   }
 }
 
-pub const is_en_passant_move -> fn (bd: *Board, mv: *Move, piece_byte: byte, is_white_piece: int) int {
+pub const is_en_passant_move -> fn (bd: *Board, mv: *Move, piece_byte: byte, is_white_piece: i64) i64 {
   // Must be a pawn
   if (piece_byte != 'P' && piece_byte != 'p') { return 0; }
   
   // Must be a diagonal move
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   
-  let abs_dc: int;
+  let abs_dc: i64;
   if (dc < 0) { abs_dc = -dc; } else { abs_dc = dc; }
   
   if (abs_dc != 1) { return 0; }
@@ -456,7 +457,7 @@ pub const is_en_passant_move -> fn (bd: *Board, mv: *Move, piece_byte: byte, is_
   if (is_white_piece == 0 && dr != 1) { return 0; }
   
   // Destination square must be empty
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   if (bd.squares[to_index] != '.') { return 0; }
   
   // Must match the en passant column and row
@@ -474,7 +475,7 @@ pub const update_en_passant_state -> fn (bd: *Board, mv: *Move, piece_byte: byte
   // Check if this was a pawn moving two squares
   if (piece_byte != 'P' && piece_byte != 'p') { return; }
   
-  let dr: int = mv.to_row - mv.from_row;
+  let dr: i64 = mv.to_row - mv.from_row;
   if (dr != 2 && dr != -2) { return; }
   
   // Set en passant state
@@ -482,9 +483,9 @@ pub const update_en_passant_state -> fn (bd: *Board, mv: *Move, piece_byte: byte
   bd.en_passant_row = mv.to_row;
 }
 
-pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_valid: *int) void {
-  let from_index: int = mv.from_row * 8 + mv.from_col;
-  let to_index: int   = mv.to_row   * 8 + mv.to_col;
+pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *i64, is_valid: *i64) void {
+  let from_index: i64 = mv.from_row * 8 + mv.from_col;
+  let to_index: i64   = mv.to_row   * 8 + mv.to_col;
 
   // Safety: Ensure coordinates are within bounds
   if (from_index < 0 || from_index >= 64 || to_index < 0 || to_index >= 64) {
@@ -504,8 +505,8 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
 
   // Determine piece color
   // FIXME: Need to fix when cast the result of a bool it returns -1 and 0 instead of 1 and 0
-  let is_white_piece: int = piece::is_white_piece(piece_byte); 
-  let is_black_piece: int = piece::is_black_piece(piece_byte); 
+  let is_white_piece: i64 = piece::is_white_piece(piece_byte); 
+  let is_black_piece: i64 = piece::is_black_piece(piece_byte); 
 
   // Validate turn (fixed)
   if ((*white_to_move == 1 && is_white_piece == 0) ||
@@ -522,7 +523,7 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
 
 
   // Check for en passant move
-  let is_en_passant: int = is_en_passant_move(bd, mv, piece_byte, is_white_piece);
+  let is_en_passant: i64 = is_en_passant_move(bd, mv, piece_byte, is_white_piece);
   
   if (is_en_passant == 0) {
     // Normal capture legality check
@@ -560,20 +561,20 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
   }
 
   // Validate piece movement rules
-  let rule: *PieceRules = piece::get_rules(piece_byte);
-  if (rule == cast<*PieceRules>(0)) {
+  let rule: *piece::PieceRules = piece::get_rules(piece_byte);
+  if (rule == cast<*piece::PieceRules>(0)) {
     output("Error: Unknown piece type.\n");
     *is_valid = 1;
     return;
   }
   
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   
   // Special handling for pawns
   if (piece_byte == 'P' || piece_byte == 'p') {
     // Allow en passant or normal pawn move
-    let is_valid_pawn: int = 0;
+    let is_valid_pawn: i64 = 0;
     
     if (is_en_passant == 1) {
       is_valid_pawn = 1;
@@ -599,7 +600,7 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
   let backup_from: byte = bd.squares[from_index];
   let backup_to: byte   = bd.squares[to_index];
   let backup_en_passant: byte = '.';
-  let en_passant_capture_index: int = -1;
+  let en_passant_capture_index: i64 = -1;
   
   if (is_en_passant == 1) {
     // The captured pawn is at the same row as the moving pawn, same column as destination
@@ -617,7 +618,7 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
   }
 
   // Check if own king is now in check
-  let in_check: int = is_king_in_check(bd, -cast<int>(is_white_piece == 1));
+  let in_check: i64 = is_king_in_check(bd, -cast<i64>(is_white_piece == 1));
   if (in_check == 1) {
     // Undo move
     bd.squares[from_index] = backup_from;
@@ -646,7 +647,7 @@ pub const update_board -> fn (bd: *Board, mv: *Move, white_to_move: *int, is_val
   update_castling_rights(bd, mv, piece_byte);
 }
 
-pub const print_board -> fn (bd: *Board, moves: **byte, move_count: int) void {
+pub const print_board -> fn (bd: *Board, moves: **byte, move_count: i64) void {
   output("  ╔═════════════════╗");
   
   // Show moves on the right side of the board
@@ -656,41 +657,45 @@ pub const print_board -> fn (bd: *Board, moves: **byte, move_count: int) void {
   output("\n");
   
   // Calculate how many move pairs we have
-  let total_move_pairs: int = (move_count + 1) / 2;
+  let total_move_pairs: i64 = (move_count + 1) / 2;
   
   // Calculate how many columns we need (8 move pairs per column)
-  let num_columns: int = (total_move_pairs + 7) / 8;
+  let num_columns: i64 = (total_move_pairs + 7) / 8;
   
-  loop [i: int = 0](i < 8) : (++i) {
+  loop [i: i64 = 0](i < 8) : (++i) {
     output(8 - i, " ║ ");
-    loop [j: int = 0](j < 8) : (++j) {
+    loop [j: i64 = 0](j < 8) : (++j) {
       let piece: *byte;
+      // The hollow white chess glyphs (U+2654-U+2659) are missing from many
+      // terminal fonts, so use the widely available solid glyphs for both
+      // sides and tell them apart with color instead.
+      let color: *byte = termfx::RESET;
       switch (bd.squares[i * 8 + j]) {
-        'P' -> { piece = "♟"; }
-        'N' -> { piece = "♞"; }
-        'B' -> { piece = "♝"; }
-        'R' -> { piece = "♜"; }
-        'Q' -> { piece = "♛"; }
-        'K' -> { piece = "♚"; }
-        'p' -> { piece = "♙"; }
-        'n' -> { piece = "♘"; }
-        'b' -> { piece = "♗"; }
-        'r' -> { piece = "♖"; }
-        'q' -> { piece = "♕"; }
-        'k' -> { piece = "♔"; }
+        'P' -> { piece = "P"; color = termfx::BRIGHT_WHITE; }
+        'N' -> { piece = "♞"; color = termfx::BRIGHT_WHITE; }
+        'B' -> { piece = "♝"; color = termfx::BRIGHT_WHITE; }
+        'R' -> { piece = "♜"; color = termfx::BRIGHT_WHITE; }
+        'Q' -> { piece = "♛"; color = termfx::BRIGHT_WHITE; }
+        'K' -> { piece = "♚"; color = termfx::BRIGHT_WHITE; }
+        'p' -> { piece = "p"; color = termfx::BRIGHT_BLACK; }
+        'n' -> { piece = "♞"; color = termfx::BRIGHT_BLACK; }
+        'b' -> { piece = "♝"; color = termfx::BRIGHT_BLACK; }
+        'r' -> { piece = "♜"; color = termfx::BRIGHT_BLACK; }
+        'q' -> { piece = "♛"; color = termfx::BRIGHT_BLACK; }
+        'k' -> { piece = "♚"; color = termfx::BRIGHT_BLACK; }
         '.' -> { piece = "·"; }
       }
-      output(piece, " ");
+      output(color, piece, " ", termfx::RESET);
     }
     output("║");
     
     // Display moves across multiple columns
-    loop [col: int = 0](col < num_columns) : (++col) {
+    loop [col: i64 = 0](col < num_columns) : (++col) {
       // Calculate which move pair this is (column * 8 + row)
-      let move_pair_index: int = col * 8 * 2 + i * 2;
+      let move_pair_index: i64 = col * 8 * 2 + i * 2;
       
       if (move_pair_index < move_count) {
-        let move_num: int = move_pair_index / 2 + 1;
+        let move_num: i64 = move_pair_index / 2 + 1;
         
         // Add spacing before each column
         if (col == 0) {

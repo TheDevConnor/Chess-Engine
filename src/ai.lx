@@ -2,43 +2,42 @@
 
 @use "board" as board
 @use "piece" as piece
-@use "std_string" as string
 @use "openings" as openings
 
 // Transposition table entry
 const TTEntry -> struct {
-  hash: int,           // Position hash
-  depth: int,          // Depth of search
-  score: int,          // Evaluation score
-  flag: int,           // 0=exact, 1=lower bound (alpha), 2=upper bound (beta)
-  best_move: Move      // Best move found
+  hash: i64,           // Position hash
+  depth: i64,          // Depth of search
+  score: i64,          // Evaluation score
+  flag: i64,           // 0=exact, 1=lower bound (alpha), 2=upper bound (beta)
+  best_move: board::Move      // Best move found
 };
 
 // Transposition table - simple hash table
-const ZOBRIST_SIZE: int = 768; // 12 piece types * 64 squares
-const TT_SIZE: int = 65536;  // 64K entries (power of 2 for fast modulo)
-const TT_EXACT: int = 0;
-const TT_ALPHA: int = 1;
-const TT_BETA: int = 2;
+const ZOBRIST_SIZE: i64 = 768; // 12 piece types * 64 squares
+const TT_SIZE: i64 = 65536;  // 64K entries (power of 2 for fast modulo)
+const TT_EXACT: i64 = 0;
+const TT_ALPHA: i64 = 1;
+const TT_BETA: i64 = 2;
 
 pub const AI -> struct {
-  depth: int,
-  best_move: Move,
-  use_opening_book: int,
+  depth: i64,
+  best_move: board::Move,
+  use_opening_book: i64,
   tt: *TTEntry,         
-  nodes_searched: int,
-  zobrist_hash: *int,
+  nodes_searched: i64,
+  zobrist_hash: *i64,
 };
 
 // Piece values for evaluation
-const PAWN_VALUE:   int = 100;
-const KNIGHT_VALUE: int = 320;
-const BISHOP_VALUE: int = 330;
-const ROOK_VALUE:   int = 500;
-const QUEEN_VALUE:  int = 900;
-const KING_VALUE:   int = 20000;
+const PAWN_VALUE:   i64 = 100;
+const KNIGHT_VALUE: i64 = 320;
+const BISHOP_VALUE: i64 = 330;
+const ROOK_VALUE:   i64 = 500;
+const QUEEN_VALUE:  i64 = 900;
+const KING_VALUE:   i64 = 20000;
 
-const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int;
+const is_move_valid -> fn (bd: *board::Board, mv: *board::Move, is_white: i64) i64;
 
 // Initialize transposition table
 #returns_ownership
@@ -46,7 +45,7 @@ pub const init_ai -> fn (ai: *AI) void {
   ai.tt = cast<*TTEntry>(alloc(TT_SIZE * sizeof<TTEntry>));
   
   // Initialize all entries
-  loop [i: int = 0](i < TT_SIZE) : (++i) {
+  loop [i: i64 = 0](i < TT_SIZE) : (++i) {
     ai.tt[i].hash = -1;
     ai.tt[i].depth = -1;
     ai.tt[i].score = 0;
@@ -54,9 +53,9 @@ pub const init_ai -> fn (ai: *AI) void {
   }
 
   // Initialize Zobrist table
-  ai.zobrist_hash = cast<*int>(alloc(ZOBRIST_SIZE * sizeof<int>));
+  ai.zobrist_hash = cast<*i64>(alloc(ZOBRIST_SIZE * sizeof<i64>));
 
-  loop [i: int = 0](i < ZOBRIST_SIZE) : (++i) {
+  loop [i: i64 = 0](i < ZOBRIST_SIZE) : (++i) {
     ai.zobrist_hash[i] = (i * 2654435761) & 0xFFFFFFFF; // Knuth's multiplicative hash
   }
   
@@ -67,16 +66,16 @@ pub const init_ai -> fn (ai: *AI) void {
 #takes_ownership
 pub const free_ai -> fn (ai: *AI) void {
   if (ai.tt != cast<*TTEntry>(0)) free(ai.tt);
-  if (ai.zobrist_hash != cast<*int>(0)) free(ai.zobrist_hash);
+  if (ai.zobrist_hash != cast<*i64>(0)) free(ai.zobrist_hash);
 }
 
 // Get Zobrist table index for a piece on a square 
-const get_zobrist_index -> fn (piece_byte: byte, square: int) int {
+const get_zobrist_index -> fn (piece_byte: byte, square: i64) i64 {
   if (piece_byte == '.') return -1;
 
   // White pieces: P=0, N=1, B=2, R=3, Q=4, K=5
   // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
-  let piece_index: int = -1;
+  let piece_index: i64 = -1;
 
   switch (piece_byte) {
     'P' -> { piece_index = 0; }
@@ -97,14 +96,14 @@ const get_zobrist_index -> fn (piece_byte: byte, square: int) int {
   return piece_index * 64 + square;
 }
 
-const hash_position -> fn (ai: *AI, bd: *Board) int {
-  let hash: int = 0;
+const hash_position -> fn (ai: *AI, bd: *board::Board) i64 {
+  let hash: i64 = 0;
 
-  loop [i: int = 0](i < 64) : (++i) {
+  loop [i: i64 = 0](i < 64) : (++i) {
     let piece_byte: byte = bd.squares[i];
     if (piece_byte == '.') continue;
 
-    let zobrist_index: int = get_zobrist_index(piece_byte, i);
+    let zobrist_index: i64 = get_zobrist_index(piece_byte, i);
     if (zobrist_index >= 0 && zobrist_index < ZOBRIST_SIZE) {
       hash = hash ^ ai.zobrist_hash[zobrist_index];
     }
@@ -125,8 +124,8 @@ const hash_position -> fn (ai: *AI, bd: *Board) int {
 }
 
 // Store position in transposition table
-const tt_store -> fn (ai: *AI, hash: int, depth: int, score: int, flag: int, mv: *Move) void {
-  let index: int = hash % TT_SIZE;
+const tt_store -> fn (ai: *AI, hash: i64, depth: i64, score: i64, flag: i64, mv: *board::Move) void {
+  let index: i64 = hash % TT_SIZE;
   if (index < 0) { index = -index; }
   
   // Replace if: no entry, or deeper search, or same depth but better score
@@ -140,12 +139,12 @@ const tt_store -> fn (ai: *AI, hash: int, depth: int, score: int, flag: int, mv:
 }
 
 // Probe transposition table
-const tt_probe -> fn (ai: *AI, hash: int, depth: int, alpha: int, beta: int, result_score: *int) int {
-  let index: int = hash % TT_SIZE;
+const tt_probe -> fn (ai: *AI, hash: i64, depth: i64, alpha: i64, beta: i64, result_score: *i64) i64 {
+  let index: i64 = hash % TT_SIZE;
   if (index < 0) { index = -index; }
   
   if (ai.tt[index].hash == hash && ai.tt[index].depth >= depth) {
-    let score: int = ai.tt[index].score;
+    let score: i64 = ai.tt[index].score;
     
     if (ai.tt[index].flag == TT_EXACT) {
       *result_score = score;
@@ -163,10 +162,10 @@ const tt_probe -> fn (ai: *AI, hash: int, depth: int, alpha: int, beta: int, res
 }
 
 // Get piece value for evaluation
-const get_piece_value -> fn (piece_byte: byte) int {
+const get_piece_value -> fn (piece_byte: byte) i64 {
   let piece_upper: byte = piece_byte;
   if (piece_byte >= 'a' && piece_byte <= 'z') {
-    piece_upper = cast<byte>(cast<int>(piece_byte) - 32);
+    piece_upper = cast<byte>(cast<i64>(piece_byte) - 32);
   }
   
   switch (piece_upper) {
@@ -181,16 +180,16 @@ const get_piece_value -> fn (piece_byte: byte) int {
   return 0;
 }
 
-const get_position_bonus -> fn (piece_byte: byte, square: int) int {
-  let row: int = square / 8;
-  let col: int = square % 8;
+const get_position_bonus -> fn (piece_byte: byte, square: i64) i64 {
+  let row: i64 = square / 8;
+  let col: i64 = square % 8;
 
-  let is_center: int = 0;
+  let is_center: i64 = 0;
   if ((row == 3 || row == 4) && (col == 3 || col ==4)) is_center = 1;
 
   let piece_upper: byte = piece_byte;
   if (piece_byte >= 'a' && piece_byte <= 'z')
-    piece_upper = cast<byte>(cast<int>(piece_byte) - 32);
+    piece_upper = cast<byte>(cast<i64>(piece_byte) - 32);
 
   // The knights and bishops get a bonus in the center
   if ((piece_upper == 'N' || piece_upper == 'B') && is_center == 1) return 30;
@@ -208,15 +207,15 @@ const get_position_bonus -> fn (piece_byte: byte, square: int) int {
 
 // Evaluate the current board position
 // ALWAYS returns from WHITE's perspective (positive = good for white, negative = good for black)
-pub const evaluate_position -> fn (bd: *Board) int {
-  let score: int = 0;
+pub const evaluate_position -> fn (bd: *board::Board) i64 {
+  let score: i64 = 0;
   
-  loop [i: int = 0](i < 64) : (++i) {
+  loop [i: i64 = 0](i < 64) : (++i) {
     let piece_byte: byte = bd.squares[i];
     if (piece_byte == '.') { continue; }
     
-    let value: int = get_piece_value(piece_byte);
-    let pos_bonus: int = get_position_bonus(piece_byte, i);
+    let value: i64 = get_piece_value(piece_byte);
+    let pos_bonus: i64 = get_position_bonus(piece_byte, i);
     
     // Add value for white pieces, subtract for black pieces
     if (piece::is_white_piece(piece_byte) == 1) {
@@ -230,26 +229,26 @@ pub const evaluate_position -> fn (bd: *Board) int {
 }
 
 // Score a move for move ordering (MVV-LVA: Most Valuable Victim - Least Valuable Attacker)
-const score_move -> fn (bd: *Board, mv: *Move) int {
-  let from_index: int = mv.from_row * 8 + mv.from_col;
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+const score_move -> fn (bd: *board::Board, mv: *board::Move) i64 {
+  let from_index: i64 = mv.from_row * 8 + mv.from_col;
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   
   let attacker: byte = bd.squares[from_index];
   let victim: byte = bd.squares[to_index];
   
-  let score: int = 0;
+  let score: i64 = 0;
   
   // Captures are good - value of victim minus value of attacker
   if (victim != '.') {
-    let victim_value: int = get_piece_value(victim);
-    let attacker_value: int = get_piece_value(attacker);
+    let victim_value: i64 = get_piece_value(victim);
+    let attacker_value: i64 = get_piece_value(attacker);
     score = victim_value - attacker_value / 10;
   }
   
   // Promotions - Very high score 
   let piece_upper: byte = attacker;
   if (attacker >= 'a' && attacker <= 'z') {
-    piece_upper = cast<byte>(cast<int>(attacker) - 32);
+    piece_upper = cast<byte>(cast<i64>(attacker) - 32);
   }
 
   if (piece_upper == 'P') {
@@ -264,8 +263,8 @@ const score_move -> fn (bd: *Board, mv: *Move) int {
   }
 
   // Central Squares - Bonus for controlling center 
-  let to_row: int = mv.to_row;
-  let to_col: int = mv.to_col;
+  let to_row: i64 = mv.to_row;
+  let to_col: i64 = mv.to_col;
 
   if ((to_row == 3 || to_row == 4) && (to_col == 3 || to_col == 4)) 
     score = score + 20; // Center control bonus
@@ -275,24 +274,24 @@ const score_move -> fn (bd: *Board, mv: *Move) int {
   return score;
 }
 
-const is_capture -> fn (bd: *Board, mv: *Move) int {
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+const is_capture -> fn (bd: *board::Board, mv: *board::Move) i64 {
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   let target: byte = bd.squares[to_index];
-  return cast<int>(target != '.');
+  return cast<i64>(target != '.');
 }
 
 // Sort moves by score (bubble sort - simple but effective for small lists)
-const sort_moves -> fn (bd: *Board, moves: *Move, move_count: int) void {
+const sort_moves -> fn (bd: *board::Board, moves: *board::Move, move_count: i64) void {
   if (move_count <= 1) { return; }  // Add this check!
   
-  loop [i: int = 0](i < move_count - 1) : (++i) {
-    loop [j: int = 0](j < move_count - i - 1) : (++j) {
-      let score_j: int = score_move(bd, &moves[j]);
-      let score_j1: int = score_move(bd, &moves[j + 1]);
+  loop [i: i64 = 0](i < move_count - 1) : (++i) {
+    loop [j: i64 = 0](j < move_count - i - 1) : (++j) {
+      let score_j: i64 = score_move(bd, &moves[j]);
+      let score_j1: i64 = score_move(bd, &moves[j + 1]);
       
       if (score_j < score_j1) {
         // Swap
-        let temp: Move = moves[j];
+        let temp: board::Move = moves[j];
         moves[j] = moves[j + 1];
         moves[j + 1] = temp;
       }
@@ -301,10 +300,10 @@ const sort_moves -> fn (bd: *Board, moves: *Move, move_count: int) void {
 }
 
 // Generate all legal moves for a given color
-pub const generate_moves -> fn (bd: *Board, is_white: int, moves: *Move, max_moves: int) int {
-  let move_count: int = 0;
+pub const generate_moves -> fn (bd: *board::Board, is_white: i64, moves: *board::Move, max_moves: i64) i64 {
+  let move_count: i64 = 0;
   
-  loop [from: int = 0](from < 64 && move_count < max_moves) : (++from) {
+  loop [from: i64 = 0](from < 64 && move_count < max_moves) : (++from) {
     let piece_byte: byte = bd.squares[from];
     if (piece_byte == '.') { continue; }
     
@@ -312,17 +311,17 @@ pub const generate_moves -> fn (bd: *Board, is_white: int, moves: *Move, max_mov
     if (is_white == 1 && piece::is_white_piece(piece_byte) == 0) { continue; }
     if (is_white == 0 && piece::is_black_piece(piece_byte) == 0) { continue; }
     
-    let from_row: int = from / 8;
-    let from_col: int = from % 8;
+    let from_row: i64 = from / 8;
+    let from_col: i64 = from % 8;
     
     // Try all possible destination squares
-    loop [to: int = 0](to < 64 && move_count < max_moves) : (++to) {
+    loop [to: i64 = 0](to < 64 && move_count < max_moves) : (++to) {
       if (from == to) { continue; }
       
-      let to_row: int = to / 8;
-      let to_col: int = to % 8;
+      let to_row: i64 = to / 8;
+      let to_col: i64 = to % 8;
       
-      let mv: Move = {
+      let mv: board::Move = board::Move {
         from_row: from_row,
         from_col: from_col,
         to_row: to_row,
@@ -340,10 +339,10 @@ pub const generate_moves -> fn (bd: *Board, is_white: int, moves: *Move, max_mov
   return move_count;
 }
 
-pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_moves: int) int {
-  let move_count: int = 0;
+pub const generate_captures -> fn (bd: *board::Board, is_white: i64, moves: *board::Move, max_moves: i64) i64 {
+  let move_count: i64 = 0;
   
-  loop [from: int = 0](from < 64 && move_count < max_moves) : (++from) {
+  loop [from: i64 = 0](from < 64 && move_count < max_moves) : (++from) {
     let piece_byte: byte = bd.squares[from];
     if (piece_byte == '.') { continue; }
     
@@ -351,11 +350,11 @@ pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_
     if (is_white == 1 && piece::is_white_piece(piece_byte) == 0) { continue; }
     if (is_white == 0 && piece::is_black_piece(piece_byte) == 0) { continue; }
     
-    let from_row: int = from / 8;
-    let from_col: int = from % 8;
+    let from_row: i64 = from / 8;
+    let from_col: i64 = from % 8;
     
     // Try all possible destination squares
-    loop [to: int = 0](to < 64 && move_count < max_moves) : (++to) {
+    loop [to: i64 = 0](to < 64 && move_count < max_moves) : (++to) {
       if (from == to) { continue; }
       
       let target: byte = bd.squares[to];
@@ -363,18 +362,18 @@ pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_
       // ONLY consider captures (or en passant)
       if (target == '.') {
         // Check for en passant
-        let to_row: int = to / 8;
-        let to_col: int = to % 8;
+        let to_row: i64 = to / 8;
+        let to_col: i64 = to % 8;
         
         if (piece_byte == 'P' || piece_byte == 'p') {
-          let mv_temp: Move = {
+          let mv_temp: board::Move = board::Move {
             from_row: from_row,
             from_col: from_col,
             to_row: to_row,
             to_col: to_col
           };
           
-          let is_white_piece: int = piece::is_white_piece(piece_byte);
+          let is_white_piece: i64 = piece::is_white_piece(piece_byte);
           if (board::is_en_passant_move(bd, &mv_temp, piece_byte, is_white_piece) == 0) {
             continue;  // Not a capture, skip it
           }
@@ -383,10 +382,10 @@ pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_
         }
       }
       
-      let to_row: int = to / 8;
-      let to_col: int = to % 8;
+      let to_row: i64 = to / 8;
+      let to_col: i64 = to % 8;
       
-      let mv: Move = {
+      let mv: board::Move = board::Move {
         from_row: from_row,
         from_col: from_col,
         to_row: to_row,
@@ -405,9 +404,9 @@ pub const generate_captures -> fn (bd: *Board, is_white: int, moves: *Move, max_
 }
 
 // Check if a move is valid without modifying the board
-const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
-  let from_index: int = mv.from_row * 8 + mv.from_col;
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+const is_move_valid -> fn (bd: *board::Board, mv: *board::Move, is_white: i64) i64 {
+  let from_index: i64 = mv.from_row * 8 + mv.from_col;
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   
   if (from_index < 0 || from_index >= 64 || to_index < 0 || to_index >= 64) {
     return 0;
@@ -419,12 +418,12 @@ const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
   let target: byte = bd.squares[to_index];
   
   // Check piece color matches turn
-  let is_white_piece: int = piece::is_white_piece(piece_byte);
+  let is_white_piece: i64 = piece::is_white_piece(piece_byte);
   if (is_white == 1 && is_white_piece == 0) { return 0; }
   if (is_white == 0 && is_white_piece == 1) { return 0; }
   
   // Check en passant
-  let is_en_passant: int = board::is_en_passant_move(bd, mv, piece_byte, is_white_piece);
+  let is_en_passant: i64 = board::is_en_passant_move(bd, mv, piece_byte, is_white_piece);
   
   if (is_en_passant == 0) {
     if (piece::can_capture(piece_byte, target) == 0) {
@@ -438,11 +437,11 @@ const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
   }
   
   // Validate piece movement rules
-  let rule: *PieceRules = piece::get_rules(piece_byte);
-  if (rule == cast<*PieceRules>(0)) { return 0; }
+  let rule: *piece::PieceRules = piece::get_rules(piece_byte);
+  if (rule == cast<*piece::PieceRules>(0)) { return 0; }
   
-  let dc: int = mv.to_col - mv.from_col;
-  let dr: int = mv.to_row - mv.from_row;
+  let dc: i64 = mv.to_col - mv.from_col;
+  let dr: i64 = mv.to_row - mv.from_row;
   
   // Special handling for pawns
   if (piece_byte == 'P' || piece_byte == 'p') {
@@ -464,7 +463,7 @@ const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
   let backup_from: byte = bd.squares[from_index];
   let backup_to: byte = bd.squares[to_index];
   let backup_en_passant: byte = '.';
-  let en_passant_capture_index: int = -1;
+  let en_passant_capture_index: i64 = -1;
   
   if (is_en_passant == 1) {
     en_passant_capture_index = mv.from_row * 8 + mv.to_col;
@@ -478,7 +477,7 @@ const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
     bd.squares[en_passant_capture_index] = '.';
   }
   
-  let in_check: int = board::is_king_in_check(bd, -cast<int>(is_white_piece == 1));
+  let in_check: i64 = board::is_king_in_check(bd, -cast<i64>(is_white_piece == 1));
   
   // Undo move
   bd.squares[from_index] = backup_from;
@@ -493,29 +492,29 @@ const is_move_valid -> fn (bd: *Board, mv: *Move, is_white: int) int {
 }
 
 // Make a move on the board
-const make_move -> fn (bd: *Board, mv: *Move) void {
-  let from_index: int = mv.from_row * 8 + mv.from_col;
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+const make_move -> fn (bd: *board::Board, mv: *board::Move) void {
+  let from_index: i64 = mv.from_row * 8 + mv.from_col;
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   
   bd.squares[to_index] = bd.squares[from_index];
   bd.squares[from_index] = '.';
 }
 
 // Undo a move on the board
-const unmake_move -> fn (bd: *Board, mv: *Move, captured: byte) void {
-  let from_index: int = mv.from_row * 8 + mv.from_col;
-  let to_index: int = mv.to_row * 8 + mv.to_col;
+const unmake_move -> fn (bd: *board::Board, mv: *board::Move, captured: byte) void {
+  let from_index: i64 = mv.from_row * 8 + mv.from_col;
+  let to_index: i64 = mv.to_row * 8 + mv.to_col;
   
   bd.squares[from_index] = bd.squares[to_index];
   bd.squares[to_index] = captured;
 }
 
 // Quiescence search - search only tactical moves until position is quiet
-const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizing: int) int {
+const quiescence -> fn (ai: *AI, bd: *board::Board, alpha: i64, beta: i64, is_maximizing: i64) i64 {
   ai.nodes_searched = ai.nodes_searched + 1;
   
   // Stand-pat score: evaluation of current position
-  let stand_pat: int = evaluate_position(bd);
+  let stand_pat: i64 = evaluate_position(bd);
   
   if (is_maximizing == 1) {
     // White to move
@@ -536,8 +535,8 @@ const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizin
   }
   
   // Generate only captures
-  let captures: [Move; 64];
-  let capture_count: int = generate_captures(bd, is_maximizing, &captures[0], 64);
+  let captures: [board::Move; 64];
+  let capture_count: i64 = generate_captures(bd, is_maximizing, &captures[0], 64);
   
   // If no captures, return stand-pat score
   if (capture_count == 0) {
@@ -549,21 +548,21 @@ const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizin
   
   if (is_maximizing == 1) {
     // White maximizes
-    let max_eval: int = stand_pat;
+    let max_eval: i64 = stand_pat;
     
-    loop [i: int = 0](i < capture_count) : (++i) {
-      let from_index: int = captures[i].from_row * 8 + captures[i].from_col;
-      let to_index: int = captures[i].to_row * 8 + captures[i].to_col;
+    loop [i: i64 = 0](i < capture_count) : (++i) {
+      let from_index: i64 = captures[i].from_row * 8 + captures[i].from_col;
+      let to_index: i64 = captures[i].to_row * 8 + captures[i].to_col;
       let captured: byte = bd.squares[to_index];
       
       // Delta pruning: if capturing this piece can't improve alpha, skip it
-      let victim_value: int = get_piece_value(captured);
+      let victim_value: i64 = get_piece_value(captured);
       if (stand_pat + victim_value + 200 < alpha) {
         continue;  // Even best-case scenario won't beat alpha
       }
       
       make_move(bd, &captures[i]);
-      let eval: int = quiescence(ai, bd, alpha, beta, 0);
+      let eval: i64 = quiescence(ai, bd, alpha, beta, 0);
       unmake_move(bd, &captures[i], captured);
       
       if (eval > max_eval) {
@@ -582,21 +581,21 @@ const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizin
     return max_eval;
   } else {
     // Black minimizes
-    let min_eval: int = stand_pat;
+    let min_eval: i64 = stand_pat;
     
-    loop [i: int = 0](i < capture_count) : (++i) {
-      let from_index: int = captures[i].from_row * 8 + captures[i].from_col;
-      let to_index: int = captures[i].to_row * 8 + captures[i].to_col;
+    loop [i: i64 = 0](i < capture_count) : (++i) {
+      let from_index: i64 = captures[i].from_row * 8 + captures[i].from_col;
+      let to_index: i64 = captures[i].to_row * 8 + captures[i].to_col;
       let captured: byte = bd.squares[to_index];
       
       // Delta pruning
-      let victim_value: int = get_piece_value(captured);
+      let victim_value: i64 = get_piece_value(captured);
       if (stand_pat - victim_value - 200 > beta) {
         continue;
       }
       
       make_move(bd, &captures[i]);
-      let eval: int = quiescence(ai, bd, alpha, beta, 1);
+      let eval: i64 = quiescence(ai, bd, alpha, beta, 1);
       unmake_move(bd, &captures[i], captured);
       
       if (eval < min_eval) {
@@ -619,12 +618,12 @@ const quiescence -> fn (ai: *AI, bd: *Board, alpha: int, beta: int, is_maximizin
 // TODO: Implement the optimizations into the minimax function
 // Minimax algorithm with alpha-beta pruning and transposition table
 // is_maximizing: 1 = White (wants to maximize), 0 = Black (wants to minimize)
-const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_maximizing: int) int {
+const minimax -> fn (ai: *AI, bd: *board::Board, depth: i64, alpha: i64, beta: i64, is_maximizing: i64) i64 {
   ai.nodes_searched = ai.nodes_searched + 1;
   
   // Check transposition table
-  let hash: int = hash_position(ai, bd);
-  let tt_score: int = 0;
+  let hash: i64 = hash_position(ai, bd);
+  let tt_score: i64 = 0;
   if (tt_probe(ai, hash, depth, alpha, beta, &tt_score) == 1) {
     return tt_score;
   }
@@ -635,12 +634,12 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
     return quiescence(ai, bd, alpha, beta, is_maximizing);
   }
   
-  let moves: [Move; 218];
-  let move_count: int = generate_moves(bd, is_maximizing, &moves[0], 218);
+  let moves: [board::Move; 218];
+  let move_count: i64 = generate_moves(bd, is_maximizing, &moves[0], 218);
   
   // If no legal moves, it's checkmate or stalemate
   if (move_count == 0) {
-    if (board::is_king_in_check(bd, -cast<int>(is_maximizing == 1)) == 1) {
+    if (board::is_king_in_check(bd, -cast<i64>(is_maximizing == 1)) == 1) {
       // Checkmate - prefer faster checkmates
       if (is_maximizing == 1) {
         return -KING_VALUE - depth; // White is checkmated (very bad for white)
@@ -654,20 +653,20 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
   // MOVE ORDERING: Sort moves by heuristic score
   sort_moves(bd, &moves[0], move_count);
   
-  let best_move: Move;
+  let best_move: board::Move;
   
   if (is_maximizing == 1) {
     // White's turn - maximize the score
-    let max_eval: int = -KING_VALUE - 1000;
-    let flag: int = TT_ALPHA;
+    let max_eval: i64 = -KING_VALUE - 1000;
+    let flag: i64 = TT_ALPHA;
     
-    loop [i: int = 0](i < move_count) : (++i) {
-      let from_index: int = moves[i].from_row * 8 + moves[i].from_col;
-      let to_index: int = moves[i].to_row * 8 + moves[i].to_col;
+    loop [i: i64 = 0](i < move_count) : (++i) {
+      let from_index: i64 = moves[i].from_row * 8 + moves[i].from_col;
+      let to_index: i64 = moves[i].to_row * 8 + moves[i].to_col;
       let captured: byte = bd.squares[to_index];
       
       make_move(bd, &moves[i]);
-      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 0);  // Next turn is Black (minimizing)
+      let eval: i64 = minimax(ai, bd, depth - 1, alpha, beta, 0);  // Next turn is Black (minimizing)
       unmake_move(bd, &moves[i], captured);
       
       if (eval > max_eval) {
@@ -691,16 +690,16 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
     return max_eval;
   } else {
     // Black's turn - minimize the score
-    let min_eval: int = KING_VALUE + 1000;
-    let flag: int = TT_BETA;
+    let min_eval: i64 = KING_VALUE + 1000;
+    let flag: i64 = TT_BETA;
     
-    loop [i: int = 0](i < move_count) : (++i) {
-      let from_index: int = moves[i].from_row * 8 + moves[i].from_col;
-      let to_index: int = moves[i].to_row * 8 + moves[i].to_col;
+    loop [i: i64 = 0](i < move_count) : (++i) {
+      let from_index: i64 = moves[i].from_row * 8 + moves[i].from_col;
+      let to_index: i64 = moves[i].to_row * 8 + moves[i].to_col;
       let captured: byte = bd.squares[to_index];
       
       make_move(bd, &moves[i]);
-      let eval: int = minimax(ai, bd, depth - 1, alpha, beta, 1);  // Next turn is White (maximizing)
+      let eval: i64 = minimax(ai, bd, depth - 1, alpha, beta, 1);  // Next turn is White (maximizing)
       unmake_move(bd, &moves[i], captured);
       
       if (eval < min_eval) {
@@ -726,12 +725,12 @@ const minimax -> fn (ai: *AI, bd: *Board, depth: int, alpha: int, beta: int, is_
 }
 
 // Find the best move for the AI
-pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byte, move_count: int) *Move {
+pub const find_best_move -> fn (ai: *AI, bd: *board::Board, is_white: i64, moves: **byte, move_count: i64) *board::Move {
   ai.nodes_searched = 0;
   
   // Check opening book first if enabled
   if (ai.use_opening_book == 1) {
-    let book_move: Move;
+    let book_move: board::Move;
     if (openings::get_book_move(moves, move_count, &book_move) == 1) {
       ai.best_move = book_move;
       return &ai.best_move;
@@ -739,28 +738,28 @@ pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byt
   }
   
   // If not in book, use minimax with optimizations
-  let legal_moves: [Move; 218];
-  let legal_move_count: int = generate_moves(bd, is_white, &legal_moves[0], 218);
+  let legal_moves: [board::Move; 218];
+  let legal_move_count: i64 = generate_moves(bd, is_white, &legal_moves[0], 218);
   
   if (legal_move_count == 0) {
-    return cast<*Move>(0);
+    return cast<*board::Move>(0);
   }
   
   // Sort moves for better alpha-beta pruning
   sort_moves(bd, &legal_moves[0], legal_move_count);
   
-  let best_value: int;
+  let best_value: i64;
   if (is_white == 1) {
     best_value = -KING_VALUE - 1000;
   } else {
     best_value = KING_VALUE + 1000;
   }
   
-  let best_move_index: int = 0;
+  let best_move_index: i64 = 0;
   
-  loop [i: int = 0](i < legal_move_count) : (++i) {
-    let from_index: int = legal_moves[i].from_row * 8 + legal_moves[i].from_col;
-    let to_index: int = legal_moves[i].to_row * 8 + legal_moves[i].to_col;
+  loop [i: i64 = 0](i < legal_move_count) : (++i) {
+    let from_index: i64 = legal_moves[i].from_row * 8 + legal_moves[i].from_col;
+    let to_index: i64 = legal_moves[i].to_row * 8 + legal_moves[i].to_col;
     let captured: byte = bd.squares[to_index];
     
     make_move(bd, &legal_moves[i]);
@@ -768,13 +767,13 @@ pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byt
     // CRITICAL FIX: Pass the OPPONENT's perspective to minimax
     // If White is moving, next turn is Black (0 = minimizing)
     // If Black is moving, next turn is White (1 = maximizing)
-    let next_is_white: int = 0;
+    let next_is_white: i64 = 0;
     if (is_white == 0) { next_is_white = 1; }
     
-    let window: int = 50;
-    let alpha_start: int = -window;
-    let beta_start:  int =  window;
-    let eval: int = minimax(ai, bd, ai.depth - 1, alpha_start, beta_start, next_is_white);
+    let window: i64 = 50;
+    let alpha_start: i64 = -window;
+    let beta_start:  i64 =  window;
+    let eval: i64 = minimax(ai, bd, ai.depth - 1, alpha_start, beta_start, next_is_white);
     
     // if we fall outside the window, re-search with full width
     if (eval <= alpha_start || eval >= beta_start)
@@ -803,15 +802,15 @@ pub const find_best_move -> fn (ai: *AI, bd: *Board, is_white: int, moves: **byt
 }
 
 // Convert a Move to algebraic notation
-pub const move_to_string -> fn (mv: *Move, buffer: *byte) void {
-  buffer[0] = cast<byte>(cast<int>('a') + mv.from_col);
-  buffer[1] = cast<byte>(cast<int>('1') + (7 - mv.from_row));
-  buffer[2] = cast<byte>(cast<int>('a') + mv.to_col);
-  buffer[3] = cast<byte>(cast<int>('1') + (7 - mv.to_row));
+pub const move_to_string -> fn (mv: *board::Move, buffer: *byte) void {
+  buffer[0] = cast<byte>(cast<i64>('a') + mv.from_col);
+  buffer[1] = cast<byte>(cast<i64>('1') + (7 - mv.from_row));
+  buffer[2] = cast<byte>(cast<i64>('a') + mv.to_col);
+  buffer[3] = cast<byte>(cast<i64>('1') + (7 - mv.to_row));
   buffer[4] = cast<byte>(0);
 }
 
 // Get statistics
-pub const get_nodes_searched -> fn (ai: *AI) int {
+pub const get_nodes_searched -> fn (ai: *AI) i64 {
   return ai.nodes_searched;
 }

@@ -2,10 +2,10 @@
 
 pub const PieceRules -> struct {
   piece_type: byte,
-  can_jump: int,
-  can_slide: int,
-  move_offsets: [int; 16],
-  num_offsets: int
+  can_jump: i64,
+  can_slide: i64,
+  move_offsets: [i32; 16],
+  num_offsets: i64
 };
 
 const RULES: [PieceRules; 6] = [
@@ -37,17 +37,17 @@ const RULES: [PieceRules; 6] = [
   }
 ]; 
 
-pub const is_white_piece -> fn (ch: byte) int { return -cast<int>(ch >= 'A' && ch <= 'Z'); }
-pub const is_black_piece -> fn (ch: byte) int { return -cast<int>(ch >= 'a' && ch <= 'z'); }
+pub const is_white_piece -> fn (ch: byte) i64 { return -cast<i64>(ch >= 'A' && ch <= 'Z'); }
+pub const is_black_piece -> fn (ch: byte) i64 { return -cast<i64>(ch >= 'a' && ch <= 'z'); }
 
 // Get rules for a specific piece
 pub const get_rules -> fn (piece: byte) *PieceRules {
   let piece_upper: byte = piece;
   if (piece >= 'a' && piece <= 'z') {
-    piece_upper = cast<byte>(cast<int>(piece) - 32);
+    piece_upper = cast<byte>(cast<i64>(piece) - 32);
   }
   
-  loop [i: int = 0](i < 6) : (++i) {  // Changed from 5 to 6
+  loop [i: i64 = 0](i < 6) : (++i) {  // Changed from 5 to 6
     if (RULES[i].piece_type == piece_upper) {
       return &RULES[i];
     }
@@ -56,19 +56,19 @@ pub const get_rules -> fn (piece: byte) *PieceRules {
   return cast<*PieceRules>(0);
 }
 
-pub const can_capture -> fn (attacker: byte, target: byte) int {
+pub const can_capture -> fn (attacker: byte, target: byte) i64 {
   if (target == '.') { return 1; }
-  let atk_white: int = is_white_piece(attacker);
-  let tgt_white: int = is_white_piece(target);
-  return -cast<int>(atk_white != tgt_white);
+  let atk_white: i64 = is_white_piece(attacker);
+  let tgt_white: i64 = is_white_piece(target);
+  return -cast<i64>(atk_white != tgt_white);
 }
 
 // Special pawn validation function (pawns have unique rules)
-pub const validate_pawn_move -> fn (rule: *PieceRules, dc: int, dr: int, 
-                                     from_row: int, target: byte, is_white: int) int {
+pub const validate_pawn_move -> fn (rule: *PieceRules, dc: i64, dr: i64, 
+                                     from_row: i64, target: byte, is_white: i64) i64 {
   // Determine direction based on color
-  let direction: int;
-  let start_row: int;
+  let direction: i64;
+  let start_row: i64;
 
   if (is_white == 1) {
     direction = -1;
@@ -89,7 +89,7 @@ pub const validate_pawn_move -> fn (rule: *PieceRules, dc: int, dr: int,
   }
   
   // Case 3: Diagonal capture (must have enemy piece)
-  let abs_dc: int;
+  let abs_dc: i64;
   if (dc < 0) {
     abs_dc = -dc;
   } else {
@@ -103,9 +103,9 @@ pub const validate_pawn_move -> fn (rule: *PieceRules, dc: int, dr: int,
   return 0;
 }
 
-pub const can_move_direction -> fn (rule: *PieceRules, dc: int, dr: int) int {
+pub const can_move_direction -> fn (rule: *PieceRules, dc: i64, dr: i64) i64 {
   if (rule.can_slide == 1) {
-    let step_c: int;
+    let step_c: i64;
     if (dc == 0) {
       step_c = 0;
     } elif (dc > 0) {
@@ -114,7 +114,7 @@ pub const can_move_direction -> fn (rule: *PieceRules, dc: int, dr: int) int {
       step_c = -1;
     }
     
-    let step_r: int;
+    let step_r: i64;
     if (dr == 0) {
       step_r = 0;
     } elif (dr > 0) {
@@ -123,14 +123,14 @@ pub const can_move_direction -> fn (rule: *PieceRules, dc: int, dr: int) int {
       step_r = -1;
     }
     
-    loop [i: int = 0](i < rule.num_offsets) : (++i) {
+    loop [i: i64 = 0](i < rule.num_offsets) : (++i) {
       if (step_c == rule.move_offsets[i * 2] && 
           step_r == rule.move_offsets[i * 2 + 1]) {
         return 1;
       }
     }
   } else {
-    loop [i: int = 0](i < rule.num_offsets) : (++i) {
+    loop [i: i64 = 0](i < rule.num_offsets) : (++i) {
       if (dc == rule.move_offsets[i * 2] && 
           dr == rule.move_offsets[i * 2 + 1]) {
         return 1;
